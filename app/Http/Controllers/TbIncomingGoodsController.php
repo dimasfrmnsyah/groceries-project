@@ -63,9 +63,8 @@ class TbIncomingGoodsController extends Controller
 
     public function index(Request $request)
     {
-        $incomingGoods = tb_incoming_goods::all();
         if($request->ajax()) {
-            DataTables::of($incomingGoods)
+            DataTables::of(tb_incoming_goods::query())
                         ->addColumn('action', function($incomingGood) {
                             return '<a href="/incoming-goods/edit/'.$incomingGood->id.'" class="btn btn-sm btn-success"><i class="bx bx-pencil me-0"></i>
                                     </a>

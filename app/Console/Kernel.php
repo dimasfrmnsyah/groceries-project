@@ -11,7 +11,9 @@ class Kernel extends ConsoleKernel
      * Define the application's command schedule.
      */
     protected function schedule(Schedule $schedule) {
-        $schedule->command('sync:run')->everyFiveMinutes();
+        if (config('sync.enabled', false)) {
+            $schedule->command('sync:run')->everyFiveMinutes();
+        }
     }
 
 

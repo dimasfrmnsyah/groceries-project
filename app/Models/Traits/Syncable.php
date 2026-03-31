@@ -18,6 +18,10 @@ trait Syncable
 
         // Logger adaptif: aman untuk segala bentuk tabel sync_changes
         $log = function ($model, string $op) {
+            if (!config('sync.enabled', false)) {
+                return;
+            }
+
             // Jika tabel sync_changes belum ada, diamkan saja
             if (!Schema::hasTable('sync_changes')) {
                 return;

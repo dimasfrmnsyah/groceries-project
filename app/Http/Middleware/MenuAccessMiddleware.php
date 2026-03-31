@@ -5,7 +5,6 @@ namespace App\Http\Middleware;
 use App\Support\MenuHelper;
 use Closure;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
 class MenuAccessMiddleware
@@ -27,23 +26,11 @@ class MenuAccessMiddleware
             return $next($request);
         }
 
-        $hasMenuConfig = DB::table('tb_master_menuses')
-            ->where('menu_path', $routeName)
-            ->where('is_active', 1)
-            ->exists();
-
-        if (!$hasMenuConfig) {
+        if (!in_array($routeName, MenuHelper::activeRouteNames(), true)) {
             return $next($request);
         }
 
-        $allowed = DB::table('tb_master_menuses as m')
-            ->join('tb_master_menu_roles as r', 'r.menu_id', '=', 'm.id')
-            ->where('m.menu_path', $routeName)
-            ->where('m.is_active', 1)
-            ->whereRaw('LOWER(TRIM(r.role_name)) = ?', [$roleName])
-            ->exists();
-
-        if ($allowed) {
+        if (MenuHelper::roleHasRoute($routeName, $roleName)) {
             return $next($request);
         }
 
