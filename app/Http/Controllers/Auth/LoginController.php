@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Foundation\Auth\AuthenticatesUsers;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use App\Support\MenuHelper;
 class LoginController extends Controller
@@ -31,11 +32,24 @@ class LoginController extends Controller
      */
     protected function redirectTo(): string
     {
-        $routeName = MenuHelper::firstAllowedRouteFor();
-        if ($routeName && Route::has($routeName)) {
-            return route($routeName);
+        try {
+            if (Route::has('sales.index') && MenuHelper::roleHasRoute('sales.index')) {
+                return route('sales.index');
+            }
+
+            $routeName = MenuHelper::firstAllowedRouteFor();
+            if ($routeName && Route::has($routeName)) {
+                return route($routeName);
+            }
+        } catch (\Throwable $e) {
+            Log::error('login.redirect failed', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
         }
-        return '/home';
+
+        return '/';
     }
 
     /**

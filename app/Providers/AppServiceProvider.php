@@ -40,24 +40,7 @@ class AppServiceProvider extends ServiceProvider
 
         View::composer('layouts.header', function ($view) {
             try {
-                $user = Auth::user();
-                if (!$user) {
-                    $view->with('lowStockItemsGlobal', collect());
-                    return;
-                }
-                $requestedStoreId = (int) (request()->get('store') ?: request()->get('store_id'));
-                $storeId = $user->roles === 'superadmin'
-                    ? ($requestedStoreId > 0 ? $requestedStoreId : null)
-                    : ($user->store_id ?? null);
-                $cacheKey = 'low_stock_header:'.strtolower((string) ($user->roles ?? '')).':'.($storeId ?: 'all');
-                $items = Cache::remember(
-                    $cacheKey,
-                    now()->addSeconds(60),
-                    fn () => $storeId
-                        ? $this->lowStockItems((int) $storeId)
-                        : $this->lowStockAllStores()
-                );
-                $view->with('lowStockItemsGlobal', $items);
+                $view->with('lowStockItemsGlobal', collect());
             } catch (\Throwable $e) {
                 Log::error('LOW_STOCK_HEADER', ['msg' => $e->getMessage()]);
                 $view->with('lowStockItemsGlobal', collect());

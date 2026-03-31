@@ -197,9 +197,7 @@ public function index(Request $request)
     }
 
         $topProducts = $topProductsQuery->get();
-        $lowStockItems = $storeId
-            ? $this->lowStockItems((int)$storeId)
-            : ($isSuperadmin ? $this->lowStockAllStores() : collect());
+        $lowStockItems = collect();
 
     return view('home', [
         'stores'          => $stores,
