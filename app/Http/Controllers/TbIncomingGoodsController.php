@@ -38,9 +38,7 @@ class TbIncomingGoodsController extends Controller
             $this->applyProductSearch($query, $search, $type);
 
             if ($isDataTable) {
-                return DataTables::of($query)
-                    ->editColumn('tier_prices', fn ($row) => $this->normalizeTierPrices($row->tier_prices))
-                    ->toJson();
+                return $this->dataTableOptionsResponse($request, $storeId, $search, $type);
             }
 
             $rows = $query
@@ -251,6 +249,37 @@ class TbIncomingGoodsController extends Controller
             'success' => false,
             'message' => 'Gagal memuat data item.',
         ], 500);
+    }
+
+    private function dataTableOptionsResponse(Request $request, int $storeId, string $search, string $type)
+    {
+        $totalQuery = $this->optionsBaseQuery($storeId);
+        $filteredQuery = $this->optionsBaseQuery($storeId);
+        $this->applyProductSearch($filteredQuery, $search, $type);
+
+        $recordsTotal = (clone $totalQuery)->reorder()->count();
+        $recordsFiltered = (clone $filteredQuery)->reorder()->count();
+
+        $start = max(0, (int) $request->input('start', 0));
+        $length = (int) $request->input('length', 50);
+
+        if ($length < 0 || $length > 200) {
+            $length = 200;
+        }
+
+        $rows = $filteredQuery
+            ->skip($start)
+            ->take($length)
+            ->get()
+            ->map(fn ($row) => $this->formatOptionRow($row))
+            ->values();
+
+        return response()->json([
+            'draw' => (int) $request->input('draw'),
+            'recordsTotal' => $recordsTotal,
+            'recordsFiltered' => $recordsFiltered,
+            'data' => $rows,
+        ]);
     }
 
     private function optionsBaseQuery(int $storeId)

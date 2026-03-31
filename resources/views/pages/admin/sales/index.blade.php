@@ -687,7 +687,7 @@
                 itemTable = $('#table-item').DataTable({
                     paging: false,
                     processing: true,
-                    serverSide: true,
+                    serverSide: false,
                     ajax: {
                     url: "{{ route('options.incoming_goods') }}",
                     data: function (d) {
@@ -695,6 +695,14 @@
                         d.search_type = $('#search_type').val();
                         d.type = 'table';
                         d.store_id = $('#store-id').val();
+                    },
+                    dataSrc: function (json) {
+                        if (json && Array.isArray(json.data)) {
+                            return json.data;
+                        }
+
+                        console.error('table-item invalid response', json);
+                        return [];
                     },
                     error: function (xhr, status, error) {
                         console.error('table-item ajax error', {
