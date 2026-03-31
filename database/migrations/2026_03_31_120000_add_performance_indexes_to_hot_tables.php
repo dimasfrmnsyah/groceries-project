@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -79,9 +80,17 @@ return new class extends Migration
             return;
         }
 
-        Schema::table($table, function (Blueprint $blueprint) use ($columns, $indexName) {
-            $blueprint->index($columns, $indexName);
-        });
+        try {
+            Schema::table($table, function (Blueprint $blueprint) use ($columns, $indexName) {
+                $blueprint->index($columns, $indexName);
+            });
+        } catch (QueryException $e) {
+            $message = strtolower($e->getMessage());
+            if (str_contains($message, 'duplicate key name') || str_contains($message, '1061')) {
+                return;
+            }
+            throw $e;
+        }
     }
 
     private function dropIndexIfExists(string $table, string $indexName): void
@@ -90,14 +99,30 @@ return new class extends Migration
             return;
         }
 
-        Schema::table($table, function (Blueprint $blueprint) use ($indexName) {
-            $blueprint->dropIndex($indexName);
-        });
+        try {
+            Schema::table($table, function (Blueprint $blueprint) use ($indexName) {
+                $blueprint->dropIndex($indexName);
+            });
+        } catch (QueryException $e) {
+            $message = strtolower($e->getMessage());
+            if (str_contains($message, "can't drop") || str_contains($message, '1091')) {
+                return;
+            }
+            throw $e;
+        }
     }
 
     private function indexExists(string $table, string $indexName): bool
     {
-        $result = DB::select("SHOW INDEX FROM `{$table}` WHERE Key_name = ?", [$indexName]);
+        $result = DB::select(
+            'SELECT 1
+             FROM information_schema.statistics
+             WHERE table_schema = DATABASE()
+               AND table_name = ?
+               AND index_name = ?
+             LIMIT 1',
+            [$table, $indexName]
+        );
 
         return !empty($result);
     }
