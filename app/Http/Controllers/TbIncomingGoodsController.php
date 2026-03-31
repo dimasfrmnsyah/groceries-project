@@ -6,9 +6,9 @@ use App\Models\tb_incoming_goods;
 use App\Models\tb_products;
 use App\Models\tb_stores;
 use App\Models\tb_suppliers;
-use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Yajra\DataTables\Facades\DataTables;
 
@@ -18,80 +18,48 @@ class TbIncomingGoodsController extends Controller
     public function options(Request $request)
     {
         try {
-            $search = $request->has('search_term') ? $request->search_term : $request->term;
-            $draw   = $request->get('draw');
-            $userId = auth()->user()->id;
-            $user   = User::where('id', $userId)->with('store')->first();
+            $search = trim((string) ($request->input('search_term', $request->input('term', ''))));
+            $type = strtolower((string) $request->input('type', ''));
+            $isDataTable = $request->filled('draw');
+            $user = $request->user();
+            $role = strtolower((string) ($user?->roles ?? ''));
 
-            $role = strtolower((string) (auth()->user()->roles ?? ''));
-            if($role === 'superadmin') {
-                $storeId = (int)$request->get('store_id');
-                if (!$storeId) {
-                    if ($draw) {
-                        return DataTables::of(collect())->make(true);
-                    }
-                    return response()->json(['success' => true, 'data' => []]);
-                }
+            if ($role === 'superadmin') {
+                $storeId = (int) $request->input('store_id');
             } else {
-                $storeId = store_access_resolve_id($request, auth()->user(), ['store_id']);
-                if (!$storeId) {
-                    if ($draw) {
-                        return DataTables::of(collect())->make(true);
-                    }
-                    return response()->json(['success' => true, 'data' => []]);
-                }
+                $storeId = store_access_resolve_id($request, $user, ['store_id']);
             }
 
-            $products = tb_products::with(['unit', 'type', 'brand', 'storePrices'])
-                ->when($search, function($query) use ($search) {
-                    $query->where(function($q) use ($search) {
-                        $q->where('product_name', 'LIKE', '%'.$search.'%')
-                          ->orWhere('product_code', 'LIKE','%'.$search.'%');
-                    });
-                })
-                ->get();
-
-            $stockMap = $this->buildStockMap($storeId, $products->pluck('id')->all());
-
-            $products = $products
-                ->map(function($product) use ($storeId, $stockMap) {
-                    $product->current_stock = (int)($stockMap[$product->id] ?? 0);
-                    $product->price_payload = $product->priceForStore($storeId);
-                    return $product;
-                })
-                ->where('current_stock', '>', 0);
-
-            $productsArray = $products->map(function($product) {
-                $pricing = $product->price_payload ?? $product->priceForStore(null);
-                return [
-                    'id'               => $product->id,
-                    'product_code'     => $product->product_code,
-                    'product_name'     => $product->product_name,
-                    'current_stock'    => $product->current_stock,
-                    'unit_name'        => $product->unit->unit_name ?? '-',
-                    'type_name'        => $product->type->type_name ?? '-',
-                    'price'            => $pricing['selling_price'] ?? 0,
-                    'product_discount' => $pricing['product_discount'] ?? 0,
-                    'selling_price'    => ($pricing['selling_price'] ?? 0) - ($pricing['product_discount'] ?? 0),
-                    'tier_prices'      => $pricing['tier_prices'] ?? null,
-                    'brand_name'       => $product->brand->brand_name ?? '-',
-                ];
-            });
-
-            if ($draw) {
-                return DataTables::of($productsArray)->make(true);
+            if (!$storeId) {
+                return $this->emptyOptionsResponse($request);
             }
+
+            $query = $this->optionsBaseQuery($storeId);
+            $this->applyProductSearch($query, $search, $type);
+
+            if ($isDataTable) {
+                return DataTables::of($query)
+                    ->editColumn('tier_prices', fn ($row) => $this->normalizeTierPrices($row->tier_prices))
+                    ->toJson();
+            }
+
+            $rows = $query
+                ->limit($type === 'barcode' ? 5 : 50)
+                ->get()
+                ->map(fn ($row) => $this->formatOptionRow($row))
+                ->values();
 
             return response()->json([
                 'success' => true,
-                "data" => array_values($productsArray->toArray())
+                'data' => $rows,
             ]);
-
-        }catch(\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage()
+        } catch (\Throwable $e) {
+            Log::error('incoming_goods.options failed', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
             ]);
+            return $this->failedOptionsResponse($request);
         }
     }
 
@@ -250,21 +218,50 @@ class TbIncomingGoodsController extends Controller
         }
     }
 
-    /**
-     * Hitung stok agregat per produk untuk satu toko (incoming - outgoing),
-     * dengan dukungan kolom is_pending_stock serta fallback store_id di purchases.
-     */
-    private function buildStockMap(int $storeId, array $productIds): array
+    private function emptyOptionsResponse(Request $request)
     {
-        if (empty($productIds)) return [];
+        if ($request->filled('draw')) {
+            return response()->json([
+                'draw' => (int) $request->input('draw'),
+                'recordsTotal' => 0,
+                'recordsFiltered' => 0,
+                'data' => [],
+            ]);
+        }
 
-        $hasIncomingStore   = Schema::hasColumn('tb_incoming_goods', 'store_id');
-        $hasPendingIn       = Schema::hasColumn('tb_incoming_goods', 'is_pending_stock');
-        $hasPendingOut      = Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock');
+        return response()->json([
+            'success' => true,
+            'data' => [],
+        ]);
+    }
+
+    private function failedOptionsResponse(Request $request)
+    {
+        if ($request->filled('draw')) {
+            return response()->json([
+                'draw' => (int) $request->input('draw'),
+                'recordsTotal' => 0,
+                'recordsFiltered' => 0,
+                'data' => [],
+                'error' => 'Gagal memuat data item.',
+            ], 200);
+        }
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Gagal memuat data item.',
+        ], 500);
+    }
+
+    private function optionsBaseQuery(int $storeId)
+    {
+        $hasIncomingStore = Schema::hasColumn('tb_incoming_goods', 'store_id');
+        $hasPendingIn = Schema::hasColumn('tb_incoming_goods', 'is_pending_stock');
+        $hasPendingOut = Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock');
         $hasIncomingDeleted = Schema::hasColumn('tb_incoming_goods', 'deleted_at');
         $hasOutgoingDeleted = Schema::hasColumn('tb_outgoing_goods', 'deleted_at');
 
-        $incoming = DB::table('tb_incoming_goods as ig')
+        $incomingSub = DB::table('tb_incoming_goods as ig')
             ->when($hasIncomingDeleted, fn($q) => $q->whereNull('ig.deleted_at'))
             ->when(
                 $hasIncomingStore,
@@ -280,7 +277,6 @@ class TbIncomingGoodsController extends Controller
                 fn($q) => $q->join('tb_purchases as p', 'ig.purchase_id', '=', 'p.id')
                            ->where('p.store_id', $storeId)
             )
-            ->whereIn('ig.product_id', $productIds)
             ->when($hasPendingIn, function ($q) {
                 $q->where(function ($qq) {
                     $qq->whereNull('ig.is_pending_stock')
@@ -288,14 +284,12 @@ class TbIncomingGoodsController extends Controller
                 });
             })
             ->select('ig.product_id', DB::raw('SUM(ig.stock) as total_in'))
-            ->groupBy('ig.product_id')
-            ->pluck('total_in', 'product_id');
+            ->groupBy('ig.product_id');
 
-        $outgoing = DB::table('tb_outgoing_goods as og')
+        $outgoingSub = DB::table('tb_outgoing_goods as og')
             ->join('tb_sells as sl', 'og.sell_id', '=', 'sl.id')
             ->when($hasOutgoingDeleted, fn($q) => $q->whereNull('og.deleted_at'))
             ->where('sl.store_id', $storeId)
-            ->whereIn('og.product_id', $productIds)
             ->when($hasPendingOut, function ($q) {
                 $q->where(function ($qq) {
                     $qq->whereNull('og.is_pending_stock')
@@ -303,16 +297,90 @@ class TbIncomingGoodsController extends Controller
                 });
             })
             ->select('og.product_id', DB::raw('SUM(og.quantity_out) as total_out'))
-            ->groupBy('og.product_id')
-            ->pluck('total_out', 'product_id');
+            ->groupBy('og.product_id');
 
-        $stockMap = [];
-        foreach ($productIds as $pid) {
-            $totalIn  = (int)($incoming[$pid] ?? 0);
-            $totalOut = (int)($outgoing[$pid] ?? 0);
-            $stockMap[$pid] = $totalIn - $totalOut;
+        $stockExpression = '(COALESCE(incoming.total_in, 0) - COALESCE(outgoing.total_out, 0))';
+
+        return DB::table('tb_products as p')
+            ->leftJoinSub($incomingSub, 'incoming', fn ($join) => $join->on('incoming.product_id', '=', 'p.id'))
+            ->leftJoinSub($outgoingSub, 'outgoing', fn ($join) => $join->on('outgoing.product_id', '=', 'p.id'))
+            ->leftJoin('tb_units as u', 'u.id', '=', 'p.unit_id')
+            ->leftJoin('tb_types as t', 't.id', '=', 'p.type_id')
+            ->leftJoin('tb_brands as b', 'b.id', '=', 'p.brand_id')
+            ->leftJoin('tb_product_store_prices as psp', function ($join) use ($storeId) {
+                $join->on('psp.product_id', '=', 'p.id')
+                    ->where('psp.store_id', '=', $storeId);
+            })
+            ->select(
+                'p.id',
+                'p.product_code',
+                'p.product_name',
+                DB::raw($stockExpression.' as current_stock'),
+                DB::raw("COALESCE(u.unit_name, '-') as unit_name"),
+                DB::raw("COALESCE(t.type_name, '-') as type_name"),
+                DB::raw('COALESCE(psp.selling_price, p.selling_price, 0) as price'),
+                DB::raw('COALESCE(psp.product_discount, p.product_discount, 0) as product_discount'),
+                DB::raw('(COALESCE(psp.selling_price, p.selling_price, 0) - COALESCE(psp.product_discount, p.product_discount, 0)) as selling_price'),
+                DB::raw('COALESCE(psp.tier_prices, p.tier_prices) as tier_prices'),
+                DB::raw("COALESCE(b.brand_name, '-') as brand_name")
+            )
+            ->where(DB::raw($stockExpression), '>', 0)
+            ->orderBy('p.product_name');
+    }
+
+    private function applyProductSearch($query, string $search, string $type): void
+    {
+        if ($search === '') {
+            return;
         }
 
-        return $stockMap;
+        $query->where(function ($q) use ($search, $type) {
+            $like = '%'.$search.'%';
+
+            if ($type === 'barcode') {
+                $q->where('p.product_code', $search)
+                    ->orWhere('p.product_name', $search)
+                    ->orWhere('p.product_code', 'like', $like);
+                return;
+            }
+
+            $q->where('p.product_name', 'like', $like)
+                ->orWhere('p.product_code', 'like', $like);
+        });
+    }
+
+    private function formatOptionRow(object $row): array
+    {
+        return [
+            'id' => (int) $row->id,
+            'product_code' => $row->product_code,
+            'product_name' => $row->product_name,
+            'current_stock' => (int) $row->current_stock,
+            'unit_name' => $row->unit_name,
+            'type_name' => $row->type_name,
+            'price' => (float) $row->price,
+            'product_discount' => (float) $row->product_discount,
+            'selling_price' => (float) $row->selling_price,
+            'tier_prices' => $this->normalizeTierPrices($row->tier_prices),
+            'brand_name' => $row->brand_name,
+        ];
+    }
+
+    private function normalizeTierPrices($value): ?array
+    {
+        if (is_array($value)) {
+            return $value;
+        }
+
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_string($value)) {
+            $decoded = json_decode($value, true);
+            return is_array($decoded) ? $decoded : null;
+        }
+
+        return null;
     }
 }

@@ -692,9 +692,16 @@
                     url: "{{ route('options.incoming_goods') }}",
                     data: function (d) {
                         d.search_term = search_term;
-                        d.sear_type = $('#search_type').val();
+                        d.search_type = $('#search_type').val();
                         d.type = 'table';
                         d.store_id = $('#store-id').val();
+                    },
+                    error: function (xhr, status, error) {
+                        console.error('table-item ajax error', {
+                            status: xhr.status,
+                            response: xhr.responseText,
+                            error: error || status
+                        });
                     }
                     },
                     columnDefs: [

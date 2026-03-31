@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\View;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -25,8 +26,11 @@ class AppServiceProvider extends ServiceProvider
                     return;
                 }
 
-                $menus = tb_master_menus::treeAllowedForRoleName($role);
-                Log::info('SIDEBAR', ['role' => $role, 'menu_count' => $menus->count()]);
+                $menus = Cache::remember(
+                    'sidebar_menus:'.$role,
+                    now()->addMinutes(10),
+                    fn () => tb_master_menus::treeAllowedForRoleName($role)
+                );
                 $view->with('sidebarMenus', $menus);
             } catch (\Throwable $e) {
                 Log::error('SIDEBAR_ERROR', ['msg' => $e->getMessage()]);
@@ -41,18 +45,18 @@ class AppServiceProvider extends ServiceProvider
                     $view->with('lowStockItemsGlobal', collect());
                     return;
                 }
-                $requestedStoreId = (int) request()->get('store');
+                $requestedStoreId = (int) (request()->get('store') ?: request()->get('store_id'));
                 $storeId = $user->roles === 'superadmin'
                     ? ($requestedStoreId > 0 ? $requestedStoreId : null)
                     : ($user->store_id ?? null);
-                $items = $storeId
-                    ? $this->lowStockItems((int)$storeId)
-                    : $this->lowStockAllStores();
-                Log::info('LOW_STOCK_HEADER_RESULT', [
-                    'role' => $user->roles ?? null,
-                    'store_id' => $storeId,
-                    'count' => $items->count(),
-                ]);
+                $cacheKey = 'low_stock_header:'.strtolower((string) ($user->roles ?? '')).':'.($storeId ?: 'all');
+                $items = Cache::remember(
+                    $cacheKey,
+                    now()->addSeconds(60),
+                    fn () => $storeId
+                        ? $this->lowStockItems((int) $storeId)
+                        : $this->lowStockAllStores()
+                );
                 $view->with('lowStockItemsGlobal', $items);
             } catch (\Throwable $e) {
                 Log::error('LOW_STOCK_HEADER', ['msg' => $e->getMessage()]);

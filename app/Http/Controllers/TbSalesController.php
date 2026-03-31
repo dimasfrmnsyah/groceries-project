@@ -3,9 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\tb_customers;
-use App\Models\tb_incoming_goods;
 use App\Models\tb_outgoing_goods;
-use App\Models\tb_products;
 use App\Models\tb_sell;
 use App\Models\tb_stores;
 use App\Models\User;
@@ -14,7 +12,6 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
-use Yajra\DataTables\Facades\DataTables;
 
 class TbSalesController extends Controller
 {
@@ -24,7 +21,6 @@ class TbSalesController extends Controller
         $user_id = $user->id;
         $role = strtolower((string) ($user->roles ?? ''));
         $store_id = store_access_resolve_id($request, $user, ['store_id']);
-        $hasPendingIncoming = Schema::hasColumn('tb_incoming_goods', 'is_pending_stock');
         $current_month = Carbon::now()->format('m');
         $current_year = Carbon::now()->format('Y');
         $count_invoice = 0;
@@ -35,69 +31,23 @@ class TbSalesController extends Controller
                 ->count();
         }
         $invoce_number = 'INV-'.$current_year.$current_month.str_pad($count_invoice+1, 4, '0', STR_PAD_LEFT);
-        
-        // dd($invoce_number);
+
         $user = User::where('id', $user_id)->with('store')->first();
-        if($role === 'superadmin') {
+
+        if ($role === 'superadmin') {
             $customers = $store_id ? tb_customers::where('store_id', $store_id)->get() : tb_customers::all();
-            $product = tb_incoming_goods::with(['product.storePrices', 'purchase'])
-                        ->when($store_id, fn($q) => $q->whereHas('purchase', fn($p) => $p->where('store_id', $store_id)))
-                        ->when($hasPendingIncoming, function ($q) {
-                            $q->where(function ($qq) {
-                                $qq->whereNull('tb_incoming_goods.is_pending_stock')
-                                   ->orWhere('tb_incoming_goods.is_pending_stock', 0);
-                            });
-                        })
-                        ->get();
-        }
-        else if(in_array($role, ['staff', 'admin', 'kasir', 'cashier'], true)) {
+        } else if (in_array($role, ['staff', 'admin', 'kasir', 'cashier'], true)) {
             $customers = $store_id ? tb_customers::where('store_id', $store_id)->get() : collect();
-
-            $product = tb_incoming_goods::with(['product.storePrices', 'purchase'])
-                                        ->whereHas('purchase', function($q) use ($store_id) {
-                                            $q->where('store_id', $store_id);
-                                        })
-                                        ->when($hasPendingIncoming, function ($q) {
-                                            $q->where(function ($qq) {
-                                                $qq->whereNull('tb_incoming_goods.is_pending_stock')
-                                                   ->orWhere('tb_incoming_goods.is_pending_stock', 0);
-                                            });
-                                        })
-                                        ->get();
-
-        }
-        else {
+        } else {
             $customers = collect();
-            $product = collect();
         }
 
         $stores = store_access_list($user);
-        if($request->ajax()) {
-            $products = $product->map(function($row) use ($store_id) {
-                            $pricing = optional($row->product)->priceForStore($store_id);
-                            $row->price = $pricing['selling_price'] ?? 0;
-                            $row->product_discount = $pricing['product_discount'] ?? 0;
-                            $row->selling_price = ($pricing['selling_price'] ?? 0) - ($pricing['product_discount'] ?? 0);
-                            $row->tier_prices = $pricing['tier_prices'] ?? null;
-                            return $row;
-                        });
 
-            return DataTables::of($products)
-                        ->addColumn('action', function($product) {
-                            $productData = htmlspecialchars(json_encode($product), ENT_QUOTES, 'UTF-8');
-                            return '<a href="javascript:void(0)" onClick="handleSelect('.$productData.')" class="btn btn-sm
-                                    btn-success"><i class="lni lni-circle-plus me-0"></i>
-                                    </a>
-                                    ';
-                        })
-                        ->rawColumns(['action'])
-                        ->make(true);
-        };
-        
         return view('pages.admin.sales.index', [
             'user' => $user,
             'invoice_number' => $invoce_number,
-            'customers'=> $customers,
+            'customers' => $customers,
             'stores' => $stores,
             'selectedStoreId' => $store_id,
         ]);
