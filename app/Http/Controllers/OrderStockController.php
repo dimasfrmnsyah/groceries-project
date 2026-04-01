@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Maatwebsite\Excel\Facades\Excel;
@@ -11,6 +12,39 @@ use App\Exports\OrderStockExport;
 
 class OrderStockController extends Controller
 {
+    public function summary(Request $request)
+    {
+        $user = $request->user();
+        $role = strtolower((string) ($user?->roles ?? ''));
+        $requestedStoreId = (int) $request->input('store_id', $request->input('store', 0));
+
+        if ($role === 'superadmin' && $requestedStoreId <= 0) {
+            $payload = Cache::remember('order_stock_summary:all', now()->addSeconds(60), function () {
+                return $this->buildAllStoresSummaryPayload();
+            });
+
+            return response()->json($payload);
+        }
+
+        $storeId = $role === 'superadmin'
+            ? ($requestedStoreId > 0 ? $requestedStoreId : null)
+            : store_access_resolve_id($request, $user, ['store_id', 'store']);
+
+        if (!$storeId) {
+            return response()->json([
+                'success' => true,
+                'count' => 0,
+                'groups' => [],
+            ]);
+        }
+
+        $payload = Cache::remember('order_stock_summary:store:'.$storeId, now()->addSeconds(60), function () use ($storeId) {
+            return $this->buildStoreSummaryPayload($storeId);
+        });
+
+        return response()->json($payload);
+    }
+
     public function index(Request $request)
     {
         $user         = $request->user();
@@ -160,6 +194,87 @@ class OrderStockController extends Controller
 
         $filename = 'order-stock-store-'.$storeId.'.xlsx';
         return Excel::download(new OrderStockExport($exportRows), $filename);
+    }
+
+    private function buildStoreSummaryPayload(int $storeId): array
+    {
+        $storeName = DB::table('tb_stores')->where('id', $storeId)->value('store_name') ?? 'Toko';
+
+        $items = $this->lowStockQuery($storeId)
+            ->get()
+            ->map(function ($row) use ($storeId, $storeName) {
+                return [
+                    'id' => (int) $row->id,
+                    'product_code' => $row->product_code,
+                    'product_name' => $row->product_name,
+                    'store_id' => $storeId,
+                    'store_name' => $storeName,
+                    'min_stock' => $row->min_stock,
+                    'max_stock' => $row->max_stock,
+                    'stock_system' => $row->stock_system,
+                    'po_qty' => max(0, ((int) $row->max_stock) - ((int) $row->stock_system)),
+                ];
+            })
+            ->values();
+
+        return [
+            'success' => true,
+            'count' => $items->count(),
+            'groups' => [[
+                'store_id' => $storeId,
+                'store_name' => $storeName,
+                'items' => $items->all(),
+            ]],
+        ];
+    }
+
+    private function buildAllStoresSummaryPayload(): array
+    {
+        $storeIds = DB::table('tb_product_store_thresholds')
+            ->select('store_id')
+            ->distinct()
+            ->pluck('store_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->values();
+
+        $groups = collect();
+
+        foreach ($storeIds as $storeId) {
+            $storeName = DB::table('tb_stores')->where('id', $storeId)->value('store_name') ?? 'Toko';
+            $items = $this->lowStockQuery($storeId)
+                ->get()
+                ->map(function ($row) use ($storeId, $storeName) {
+                    return [
+                        'id' => (int) $row->id,
+                        'product_code' => $row->product_code,
+                        'product_name' => $row->product_name,
+                        'store_id' => $storeId,
+                        'store_name' => $storeName,
+                        'min_stock' => $row->min_stock,
+                        'max_stock' => $row->max_stock,
+                        'stock_system' => $row->stock_system,
+                        'po_qty' => max(0, ((int) $row->max_stock) - ((int) $row->stock_system)),
+                    ];
+                })
+                ->values();
+
+            if ($items->isEmpty()) {
+                continue;
+            }
+
+            $groups->push([
+                'store_id' => $storeId,
+                'store_name' => $storeName,
+                'items' => $items->all(),
+            ]);
+        }
+
+        return [
+            'success' => true,
+            'count' => $groups->sum(fn ($group) => count($group['items'] ?? [])),
+            'groups' => $groups->values()->all(),
+        ];
     }
 
     private function lowStockQuery(int $storeId)

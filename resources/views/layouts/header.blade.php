@@ -16,10 +16,12 @@
                         @endphp
                         @if($canOpenOrderStock)
                         <li class="nav-item">
-                            <a class="btn btn-sm btn-outline-primary"
-                               href="{{ route('order-stock.index', $userStoreId ? ['store' => $userStoreId] : []) }}">
-                                PO Min Max
-                            </a>
+                            <button class="btn btn-sm btn-warning d-none"
+                                    id="btn-low-stock-warning"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#lowStockHeaderModal">
+                                Perlu PO
+                            </button>
                         </li>
                         @endif
                         @if(!in_array($roleHeader, ['superadmin','admin']))
@@ -81,6 +83,31 @@
         </nav>
     </div>
 
+    @if(Route::has('order-stock.index'))
+    <div class="modal fade" id="lowStockHeaderModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header d-flex align-items-center justify-content-between">
+                    <div class="d-flex flex-column">
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="badge bg-warning text-dark">Perlu PO</span>
+                            <h5 class="modal-title mb-0">Peringatan Stok Minimum</h5>
+                        </div>
+                        <small class="text-muted">Produk di bawah stok minimum per toko</small>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <a href="{{ route('order-stock.index') }}" class="btn btn-sm btn-primary">Menu Permintaan Order</a>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                </div>
+                <div class="modal-body" id="lowStockHeaderModalBody">
+                    <div class="text-muted">Memuat data stok minimum...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    @endif
+
     {{-- Modal input pendapatan harian (khusus staff) --}}
     @if(Auth::check() && strtolower(Auth::user()->roles) === 'staff')
     <div class="modal fade" id="revenueModal" tabindex="-1" aria-labelledby="revenueModalLabel" aria-hidden="true">
@@ -123,6 +150,106 @@
 document.addEventListener('DOMContentLoaded', () => {
     const role = "{{ strtolower(Auth::user()->roles ?? '') }}";
     const token = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+    const lowStockButton = document.getElementById('btn-low-stock-warning');
+    const lowStockModalBody = document.getElementById('lowStockHeaderModalBody');
+
+    const escapeHtml = (value) => String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+
+    const renderLowStockSummary = (payload) => {
+        if (!lowStockButton || !lowStockModalBody) return;
+
+        const groups = Array.isArray(payload?.groups) ? payload.groups : [];
+        const totalCount = Number(payload?.count || 0);
+
+        if (!totalCount || groups.length === 0) {
+            lowStockButton.classList.add('d-none');
+            lowStockModalBody.innerHTML = '<div class="text-muted">Tidak ada produk di bawah stok minimum.</div>';
+            return;
+        }
+
+        lowStockButton.textContent = `Perlu PO (${totalCount})`;
+        lowStockButton.classList.remove('d-none');
+
+        lowStockModalBody.innerHTML = groups.map((group) => {
+            const storeId = group.store_id ?? '';
+            const storeName = escapeHtml(group.store_name ?? 'Toko');
+            const orderUrl = storeId ? `{{ route('order-stock.index') }}?store=${encodeURIComponent(storeId)}` : `{{ route('order-stock.index') }}`;
+            const exportUrl = storeId ? `{{ route('order-stock.export') }}?store=${encodeURIComponent(storeId)}` : '';
+            const rows = (Array.isArray(group.items) ? group.items : []).map((item) => `
+                <tr>
+                    <td>${escapeHtml(item.product_code)}</td>
+                    <td>${escapeHtml(item.product_name)}</td>
+                    <td>${escapeHtml(item.stock_system)}</td>
+                    <td>${escapeHtml(item.min_stock ?? '-')}</td>
+                    <td>${escapeHtml(item.max_stock ?? '-')}</td>
+                    <td>${escapeHtml(item.po_qty ?? 0)}</td>
+                </tr>
+            `).join('');
+
+            return `
+                <div class="mb-3 border rounded">
+                    <div class="p-2 bg-light fw-bold d-flex justify-content-between">
+                        <span>${storeName}</span>
+                        <div class="d-flex gap-2">
+                            <a href="${orderUrl}" class="btn btn-sm btn-outline-primary">Order Stock</a>
+                            ${exportUrl ? `<a href="${exportUrl}" class="btn btn-sm btn-outline-success">Export Excel</a>` : ''}
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-striped mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Kode</th>
+                                    <th>Produk</th>
+                                    <th>Stok</th>
+                                    <th>Min</th>
+                                    <th>Max</th>
+                                    <th>PO</th>
+                                </tr>
+                            </thead>
+                            <tbody>${rows}</tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    };
+
+    const loadLowStockSummary = () => {
+        if (!lowStockButton || !lowStockModalBody) return;
+
+        const params = new URLSearchParams(window.location.search);
+        const requestedStoreId = params.get('store_id') || params.get('store') || "{{ Auth::user()->store_id ?? '' }}";
+        const url = new URL("{{ route('order-stock.summary') }}", window.location.origin);
+
+        if (requestedStoreId) {
+            url.searchParams.set('store_id', requestedStoreId);
+        }
+
+        fetch(url.toString(), {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: {
+                'Accept': 'application/json'
+            }
+        })
+            .then(async (response) => {
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    throw new Error(payload.message || 'Gagal memuat notifikasi PO.');
+                }
+                renderLowStockSummary(payload);
+            })
+            .catch(() => {
+                lowStockButton.classList.add('d-none');
+                lowStockModalBody.innerHTML = '<div class="text-muted">Notifikasi PO tidak dapat dimuat saat ini.</div>';
+            });
+    };
 
     const updateStatus = (storeId, isOnline, note='') => {
         return fetch(`/store/${storeId}/toggle-online`, {
@@ -214,6 +341,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    setTimeout(loadLowStockSummary, 250);
 });
 </script>
 @endauth
