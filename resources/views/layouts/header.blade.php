@@ -5,13 +5,6 @@
             <div class="search-bar flex-grow-1"></div>
             <div class="top-menu ms-auto">
                 <ul class="navbar-nav align-items-center">
-                    @if(isset($lowStockItemsGlobal) && $lowStockItemsGlobal->count())
-                        <li class="nav-item">
-                            <button class="btn btn-sm btn-warning" data-bs-toggle="modal" data-bs-target="#lowStockHeaderModal">
-                                Perlu PO ({{ $lowStockItemsGlobal->count() }})
-                            </button>
-                        </li>
-                    @endif
                     @auth
                         @php
                             $roleHeader = strtolower(Auth::user()->roles ?? '');
@@ -87,73 +80,6 @@
             </div>
         </nav>
     </div>
-
-    @if(isset($lowStockItemsGlobal) && $lowStockItemsGlobal->count())
-    <div class="modal fade" id="lowStockHeaderModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-lg modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header d-flex align-items-center justify-content-between">
-                    <div class="d-flex flex-column">
-                        <div class="d-flex align-items-center gap-2">
-                            <span class="badge bg-warning text-dark">Perlu PO</span>
-                            <h5 class="modal-title mb-0">Peringatan Stok Minimum</h5>
-                        </div>
-                        <small class="text-muted">Produk di bawah stok minimum per toko</small>
-                    </div>
-                    <div class="d-flex align-items-center gap-2">
-                        <a href="{{ route('order-stock.index') }}" class="btn btn-sm btn-primary">Menu Permintaan Order</a>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                    </div>
-                </div>
-                <div class="modal-body">
-                    @php
-                        $hasStore = isset($lowStockItemsGlobal[0]) && isset($lowStockItemsGlobal[0]->store_name);
-                        $groups = $hasStore ? $lowStockItemsGlobal->groupBy('store_id') : collect([0 => $lowStockItemsGlobal]);
-                    @endphp
-                    @foreach($groups as $storeId => $items)
-                        <div class="mb-3 border rounded">
-                            @if($hasStore)
-                                <div class="p-2 bg-light fw-bold d-flex justify-content-between">
-                                    <span>{{ $items->first()->store_name ?? 'Toko' }}</span>
-                                    <div class="d-flex gap-2">
-                                        <a href="{{ route('order-stock.index', ['store' => $items->first()->store_id]) }}" class="btn btn-sm btn-outline-primary">Order Stock</a>
-                                        <a href="{{ route('order-stock.export', ['store' => $items->first()->store_id]) }}" class="btn btn-sm btn-outline-success">Export Excel</a>
-                                    </div>
-                                </div>
-                            @endif
-                            <div class="table-responsive">
-                                <table class="table table-striped mb-0">
-                                    <thead>
-                                        <tr>
-                                            <th>Kode</th>
-                                            <th>Produk</th>
-                                            <th>Stok</th>
-                                            <th>Min</th>
-                                            <th>Max</th>
-                                            <th>PO</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        @foreach($items as $item)
-                                            <tr>
-                                                <td>{{ $item->product_code }}</td>
-                                                <td>{{ $item->product_name }}</td>
-                                                <td>{{ $item->stock_system }}</td>
-                                                <td>{{ $item->min_stock ?? '-' }}</td>
-                                                <td>{{ $item->max_stock ?? '-' }}</td>
-                                                <td>{{ $item->po_qty ?? 0 }}</td>
-                                            </tr>
-                                        @endforeach
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    @endforeach
-                </div>
-            </div>
-        </div>
-    </div>
-    @endif
 
     {{-- Modal input pendapatan harian (khusus staff) --}}
     @if(Auth::check() && strtolower(Auth::user()->roles) === 'staff')
@@ -287,6 +213,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 .catch(err => Swal.fire({icon:'error', title:'Oops', text: err.message}));
         });
     }
+
 });
 </script>
 @endauth
