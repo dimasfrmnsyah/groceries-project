@@ -18,7 +18,17 @@
                             $userStoreId = Auth::user()->store_id ?? null;
                             $userStoreName = optional(Auth::user()->store)->store_name ?? '-';
                             $userStoreOnline = optional(Auth::user()->store)->is_online ?? false;
+                            $canOpenOrderStock = Route::has('order-stock.index')
+                                && ($roleHeader === 'superadmin' || \App\Support\MenuHelper::roleHasRoute('order-stock.index'));
                         @endphp
+                        @if($canOpenOrderStock)
+                        <li class="nav-item">
+                            <a class="btn btn-sm btn-outline-primary"
+                               href="{{ route('order-stock.index', $userStoreId ? ['store' => $userStoreId] : []) }}">
+                                PO Min Max
+                            </a>
+                        </li>
+                        @endif
                         @if(!in_array($roleHeader, ['superadmin','admin']))
                         <li class="nav-item d-flex align-items-center">
                             <div class="d-flex align-items-center gap-2">

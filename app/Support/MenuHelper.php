@@ -10,6 +10,9 @@ use Illuminate\Support\Facades\Schema;
 
 class MenuHelper
 {
+    private static ?array $activeRoutesMemo = null;
+    private static array $allowedRoutesMemo = [];
+
     public static function firstAllowedRouteFor(?string $roleName = null): ?string
     {
         foreach (self::allowedRouteNames($roleName) as $routeName) {
@@ -34,7 +37,11 @@ class MenuHelper
 
     public static function activeRouteNames(): array
     {
-        return Cache::remember('menu_active_routes', now()->addMinutes(10), function () {
+        if (self::$activeRoutesMemo !== null) {
+            return self::$activeRoutesMemo;
+        }
+
+        return self::$activeRoutesMemo = Cache::remember('menu_active_routes', now()->addMinutes(10), function () {
             return DB::table('tb_master_menuses')
                 ->where('is_active', 1)
                 ->whereNotNull('menu_path')
@@ -55,7 +62,11 @@ class MenuHelper
             return [];
         }
 
-        return Cache::remember('menu_allowed_routes:'.$role, now()->addMinutes(10), function () use ($role) {
+        if (array_key_exists($role, self::$allowedRoutesMemo)) {
+            return self::$allowedRoutesMemo[$role];
+        }
+
+        return self::$allowedRoutesMemo[$role] = Cache::remember('menu_allowed_routes:'.$role, now()->addMinutes(10), function () use ($role) {
             $q = DB::table('tb_master_menuses as m')
                 ->join('tb_master_menu_roles as r', 'r.menu_id', '=', 'm.id')
                 ->whereRaw('LOWER(TRIM(r.role_name)) = ?', [$role])
