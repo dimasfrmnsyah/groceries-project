@@ -63,6 +63,14 @@ class DailySalesReportController extends Controller
             ->leftJoin('tb_products as p', 'p.id', '=', 'tb_outgoing_goods.product_id')
             ->leftJoin('tb_stores as st', 'st.id', '=', 's.store_id')
             ->leftJoin('tb_customers as c', 'c.id', '=', 's.customer_id')
+            ->when(
+                Schema::hasColumn('tb_sells', 'deleted_at'),
+                fn ($q) => $q->whereNull('s.deleted_at')
+            )
+            ->when(
+                Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
+                fn ($q) => $q->whereNull('tb_outgoing_goods.deleted_at')
+            )
             ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId))
             // abaikan penyesuaian stock opname (invoice dibuat otomatis)
             ->where(function ($q) {
@@ -116,10 +124,46 @@ class DailySalesReportController extends Controller
             );
 
         $summaryRows = (clone $baseQuery)->get();
+        $salesTotalQuery = tb_outgoing_goods::query()
+            ->join('tb_sells as s', 's.id', '=', 'tb_outgoing_goods.sell_id')
+            ->when(
+                Schema::hasColumn('tb_sells', 'deleted_at'),
+                fn ($q) => $q->whereNull('s.deleted_at')
+            )
+            ->when(
+                Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
+                fn ($q) => $q->whereNull('tb_outgoing_goods.deleted_at')
+            )
+            ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId))
+            ->where(function ($q) {
+                $q->whereNull('s.no_invoice')
+                  ->orWhere('s.no_invoice', 'not like', 'SO-ADJ-%');
+            })
+            ->when(Schema::hasColumn('tb_outgoing_goods','recorded_by'),
+                fn($q) => $q->whereRaw('LOWER(COALESCE(TRIM(tb_outgoing_goods.recorded_by), "")) != ?', ['stock opname'])
+            )
+            ->when(
+                Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock') && $sourceMode !== 'all',
+                fn ($q) => $q->where('tb_outgoing_goods.is_pending_stock', $sourceMode === 'offline' ? 1 : 0)
+            )
+            ->whereBetween(
+                DB::raw('COALESCE(tb_outgoing_goods.date, s.date, tb_outgoing_goods.created_at, s.created_at)'),
+                [$startDate->copy()->startOfDay(), $endDate->copy()->endOfDay()]
+            )
+            ->when(
+                $cashier && Schema::hasColumn('tb_outgoing_goods', 'recorded_by'),
+                fn ($q) => $q->where('tb_outgoing_goods.recorded_by', $cashier)
+            )
+            ->selectRaw('s.id as sell_id, s.total_price as total_price')
+            ->groupBy('s.id', 's.total_price');
+        $salesTotal = DB::query()
+            ->fromSub($salesTotalQuery, 'sales_total')
+            ->sum('total_price');
+
         $totals = [
             'items'    => $summaryRows->count(),
             'quantity' => (float)$summaryRows->sum('quantity_out'),
-            'sales'    => (float)$summaryRows->sum('line_total'),
+            'sales'    => (float)$salesTotal,
             'discount' => (float)$summaryRows->sum('discount'),
         ];
 
@@ -211,6 +255,14 @@ class DailySalesReportController extends Controller
             ->leftJoin('tb_products as p', 'p.id', '=', 'tb_outgoing_goods.product_id')
             ->leftJoin('tb_stores as st', 'st.id', '=', 's.store_id')
             ->leftJoin('tb_customers as c', 'c.id', '=', 's.customer_id')
+            ->when(
+                Schema::hasColumn('tb_sells', 'deleted_at'),
+                fn ($q) => $q->whereNull('s.deleted_at')
+            )
+            ->when(
+                Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
+                fn ($q) => $q->whereNull('tb_outgoing_goods.deleted_at')
+            )
             ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId))
             // abaikan penyesuaian stock opname (invoice dibuat otomatis)
             ->where(function ($q) {
