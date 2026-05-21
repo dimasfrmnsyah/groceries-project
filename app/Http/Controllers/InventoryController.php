@@ -12,6 +12,8 @@ use App\Models\tb_stock_opnames;
 
 class InventoryController extends Controller
 {
+    private const MAX_STOCK_OPNAME_QUANTITY = 1000000;
+
     public function index(Request $request)
     {
         $user     = auth()->user();
@@ -223,9 +225,9 @@ class InventoryController extends Controller
             DB::transaction(function () use ($items, $userId, $storeId) {
                 $now = now();
 
-                // Stock opname is the authoritative physical count for the store,
-                // so its adjustment rows must affect stock immediately.
-                $isPending = 0;
+                // Saat toko offline, adjustment disimpan pending dan dilepas saat toko online kembali.
+                $storeOnline = (int) DB::table('tb_stores')->where('id', $storeId)->value('is_online') === 1;
+                $isPending = $storeOnline ? 0 : 1;
 
                 $incomingDeletedSql = Schema::hasColumn('tb_incoming_goods', 'deleted_at')
                     ? ' AND ig.deleted_at IS NULL'
@@ -303,6 +305,7 @@ class InventoryController extends Controller
                     if ($pid <= 0) continue;
 
                     $system = (int)($incoming[$pid] ?? 0) - (int)($outgoing[$pid] ?? 0);
+                    $this->assertReasonableStockAdjustment($pid, $system, $phys);
                     $minus  = max(0, $system - $phys);
                     $price  = (int)($prices[$pid] ?? 0);
 
@@ -642,7 +645,7 @@ class InventoryController extends Controller
                 return [
                     'product_id'        => (int)($row['product_id'] ?? 0),
                     'store_id'          => (int)($row['store_id'] ?? 0),
-                    'physical_quantity' => max(0, (int)($row['physical_quantity'] ?? 0)),
+                    'physical_quantity' => $this->normalizePhysicalQuantity($row['physical_quantity'] ?? 0),
                 ];
             }, $previewItems));
         }
@@ -689,7 +692,7 @@ class InventoryController extends Controller
                 $items[] = [
                     'product_id'        => (int)$pid,
                     'store_id'          => (int)($sids[$i] ?? 0),
-                    'physical_quantity' => max(0, (int)($phys[$i] ?? 0)),
+                    'physical_quantity' => $this->normalizePhysicalQuantity($phys[$i] ?? 0),
                 ];
             }
         }
@@ -713,7 +716,7 @@ class InventoryController extends Controller
             return [
                 'product_id'        => (int)($row['product_id'] ?? 0),
                 'store_id'          => (int)($row['store_id'] ?? 0),
-                'physical_quantity' => max(0, (int)($row['physical_quantity'] ?? 0)),
+                'physical_quantity' => $this->normalizePhysicalQuantity($row['physical_quantity'] ?? 0),
             ];
         }, $items));
     }
@@ -814,6 +817,7 @@ class InventoryController extends Controller
             if ($pid <= 0) continue;
 
             $system = (int)($incoming[$pid] ?? 0) - (int)($outgoing[$pid] ?? 0);
+            $this->assertReasonableStockAdjustment($pid, $system, $phys);
             $minus  = max(0, $system - $phys);
             $plus   = max(0, $phys - $system);
             $price  = (int)($prices[$pid] ?? 0);
@@ -844,5 +848,30 @@ class InventoryController extends Controller
         $summary['net_value'] = $summary['total_plus_value'] - $summary['total_minus_value'];
 
         return $summary;
+    }
+
+    private function normalizePhysicalQuantity($value): int
+    {
+        $quantity = (int) $value;
+        if ($quantity < 0) {
+            throw new \InvalidArgumentException('Jumlah fisik tidak boleh negatif');
+        }
+        if ($quantity > self::MAX_STOCK_OPNAME_QUANTITY) {
+            throw new \InvalidArgumentException('Jumlah fisik terlalu besar: '.$quantity);
+        }
+
+        return $quantity;
+    }
+
+    private function assertReasonableStockAdjustment(int $productId, int $systemStock, int $physicalQuantity): void
+    {
+        $max = self::MAX_STOCK_OPNAME_QUANTITY;
+        $adjustment = abs($physicalQuantity - $systemStock);
+
+        if (abs($systemStock) > $max || $adjustment > $max) {
+            throw new \InvalidArgumentException(
+                "Stok produk {$productId} tidak wajar. Sistem={$systemStock}, fisik={$physicalQuantity}. Periksa data mutasi sebelum stock opname."
+            );
+        }
     }
 }

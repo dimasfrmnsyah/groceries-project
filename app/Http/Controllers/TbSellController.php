@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\tb_sell;
 use App\Models\tb_products;
 use App\Models\tb_outgoing_goods;
+use App\Models\tb_stores;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -222,6 +223,8 @@ class TbSellController extends Controller
             $sell->save();
 
             $storeId = (int) $sell->store_id;
+            $storeOnline = (int) tb_stores::where('id', $storeId)->value('is_online') === 1;
+            $isPendingStock = $storeOnline ? 0 : 1;
             $hasOutgoingStore = Schema::hasColumn('tb_outgoing_goods', 'store_id');
             $hasPendingStock = Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock');
             $totalPrice = 0;
@@ -236,7 +239,7 @@ class TbSellController extends Controller
                 $outgoing->quantity_out = $qty;
                 $outgoing->date = $sell->date;
                 if ($hasPendingStock) {
-                    $outgoing->is_pending_stock = 0;
+                    $outgoing->is_pending_stock = $isPendingStock;
                 }
                 if ($hasOutgoingStore) {
                     $outgoing->store_id = $storeId;
@@ -274,7 +277,7 @@ class TbSellController extends Controller
                     'description' => $item['description'] ?? null,
                 ];
                 if ($hasPendingStock) {
-                    $payload['is_pending_stock'] = 0;
+                    $payload['is_pending_stock'] = $isPendingStock;
                 }
                 if ($hasOutgoingStore) {
                     $payload['store_id'] = $storeId;
