@@ -223,9 +223,9 @@ class InventoryController extends Controller
             DB::transaction(function () use ($items, $userId, $storeId) {
                 $now = now();
 
-                // cek status toko
-                $storeOnline = (int) DB::table('tb_stores')->where('id', $storeId)->value('is_online') === 1;
-                $isPending = $storeOnline ? 0 : 1;
+                // Stock opname is the authoritative physical count for the store,
+                // so its adjustment rows must affect stock immediately.
+                $isPending = 0;
 
                 $incomingDeletedSql = Schema::hasColumn('tb_incoming_goods', 'deleted_at')
                     ? ' AND ig.deleted_at IS NULL'
@@ -233,6 +233,8 @@ class InventoryController extends Controller
                 $outgoingDeletedSql = Schema::hasColumn('tb_outgoing_goods', 'deleted_at')
                     ? ' AND og.deleted_at IS NULL'
                     : '';
+                $hasIncomingStore = Schema::hasColumn('tb_incoming_goods', 'store_id');
+                $hasOutgoingStore = Schema::hasColumn('tb_outgoing_goods', 'store_id');
                 $incomingPendingSql = Schema::hasColumn('tb_incoming_goods', 'is_pending_stock')
                     ? ' AND (ig.is_pending_stock IS NULL OR ig.is_pending_stock = 0)'
                     : '';
@@ -294,7 +296,6 @@ class InventoryController extends Controller
                 $purchaseId    = null;
                 $totalPurchase = 0;
                 $sellId        = null;
-                $totalSell     = 0;
 
                 foreach ($items as $it) {
                     $pid  = (int)$it['product_id'];
@@ -314,13 +315,18 @@ class InventoryController extends Controller
                             );
                             $sellId = (int)DB::getPdo()->lastInsertId();
                         }
-                        $totalSell += $minus * $price;
+                        $outColumns = ['product_id', 'sell_id', 'date', 'quantity_out', 'discount', 'recorded_by', 'description', 'is_pending_stock'];
+                        $outValues = [$pid, $sellId, $now, $minus, 0, 'Stock Opname', 'Stock Opname (-)', $isPending];
+                        if ($hasOutgoingStore) {
+                            $outColumns[] = 'store_id';
+                            $outValues[] = $storeId;
+                        }
+                        $outColumns = array_merge($outColumns, ['created_at', 'updated_at']);
+                        $outValues = array_merge($outValues, [$now, $now]);
 
-                            DB::insert(
-                                'INSERT INTO tb_outgoing_goods
-                               (`product_id`,`sell_id`,`date`,`quantity_out`,`discount`,`recorded_by`,`description`,`is_pending_stock`,`created_at`,`updated_at`)
-                             VALUES (?,?,?,?,?,?,?,?,?,?)',
-                            [$pid, $sellId, $now, $minus, 0, 'Stock Opname', 'Stock Opname (-)', $isPending, $now, $now]
+                        DB::insert(
+                            'INSERT INTO tb_outgoing_goods (`'.implode('`,`', $outColumns).'`) VALUES ('.implode(',', array_fill(0, count($outColumns), '?')).')',
+                            $outValues
                         );
                     }
 
@@ -347,11 +353,18 @@ class InventoryController extends Controller
 
                         $totalPurchase += $plus * $price;
 
+                        $inColumns = ['purchase_id', 'product_id', 'stock', 'description', 'is_pending_stock'];
+                        $inValues = [$purchaseId, $pid, $plus, 'Stock Opname (+)', $isPending];
+                        if ($hasIncomingStore) {
+                            $inColumns[] = 'store_id';
+                            $inValues[] = $storeId;
+                        }
+                        $inColumns = array_merge($inColumns, ['created_at', 'updated_at']);
+                        $inValues = array_merge($inValues, [$now, $now]);
+
                         DB::insert(
-                            'INSERT INTO tb_incoming_goods
-                               (`purchase_id`,`product_id`,`stock`,`description`,`is_pending_stock`,`created_at`,`updated_at`)
-                             VALUES (?,?,?,?,?,?,?)',
-                            [$purchaseId, $pid, $plus, 'Stock Opname (+)', $isPending, $now, $now]
+                            'INSERT INTO tb_incoming_goods (`'.implode('`,`', $inColumns).'`) VALUES ('.implode(',', array_fill(0, count($inColumns), '?')).')',
+                            $inValues
                         );
                     }
                 }
@@ -366,7 +379,7 @@ class InventoryController extends Controller
                 if ($sellId !== null) {
                     DB::update(
                         'UPDATE tb_sells SET total_price = ?, payment_amount = ?, updated_at = ? WHERE id = ?',
-                        [$totalSell, 0, $now, $sellId]
+                        [0, 0, $now, $sellId]
                     );
                 }
             });

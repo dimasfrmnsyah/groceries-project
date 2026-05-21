@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Models\tb_customers;
 use App\Models\tb_outgoing_goods;
 use App\Models\tb_sell;
-use App\Models\tb_stores;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -78,8 +77,6 @@ class TbSalesController extends Controller
         }
         DB::beginTransaction();
         try {
-            $storeOnline = (int) tb_stores::where('id', $store_id)->value('is_online') === 1;
-            $isPendingStock = $storeOnline ? 0 : 1;
             $hasOutgoingStore = Schema::hasColumn('tb_outgoing_goods', 'store_id');
             $hasPendingStock = Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock');
 
@@ -104,7 +101,7 @@ class TbSalesController extends Controller
                     // 'description' => $product['description']
                 ];
                 if ($hasPendingStock) {
-                    $payload['is_pending_stock'] = $isPendingStock;
+                    $payload['is_pending_stock'] = 0;
                 }
                 if ($hasOutgoingStore) {
                     $payload['store_id'] = $store_id;
