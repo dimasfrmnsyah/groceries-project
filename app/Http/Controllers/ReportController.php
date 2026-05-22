@@ -7,6 +7,8 @@ use App\Models\tb_outgoing_goods;
 use Illuminate\Http\Request;
 use Yajra\DataTables\Facades\DataTables;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 class ReportController extends Controller
 {
     public function index(Request $request)
@@ -64,36 +66,24 @@ class ReportController extends Controller
     $startStr = $start->toDateString(); // YYYY-MM-DD
     $endStr   = $end->toDateString();
 
-    // --- Select & base query ---
-    $select = ['id', 'user_id', 'amount', 'date', 'created_at'];
-    if (\Illuminate\Support\Facades\Schema::hasColumn('tb_daily_revenues', 'store_id')) {
-        $select[] = 'store_id';
-    }
-
-    $base = \App\Models\tb_daily_revenues::with('user:id,name,store_id')
-        ->select($select);
-
-    // Filter store
-    if (\Illuminate\Support\Facades\Schema::hasColumn('tb_daily_revenues','store_id')) {
-        $base->where('store_id', $storeId);
-    } else {
-        $base->whereHas('user', fn($q) => $q->where('store_id', $storeId));
-    }
-
-    // 🔧 PENTING: jika kolom `date` adalah DATE, pakai whereDate
-    $base->whereDate('date', '>=', $startStr)
-         ->whereDate('date', '<=', $endStr);
-
-    // Totals.amount
-    $totalAmount = (float) (clone $base)->sum('amount');
+    $revenueRows = \App\Models\tb_daily_revenues::with('user:id,name,store_id')
+        ->select(['id', 'user_id', 'amount', 'date', 'created_at'])
+        ->whereHas('user', fn($q) => $q->where('store_id', $storeId))
+        ->whereDate('date', '>=', $startStr)
+        ->whereDate('date', '<=', $endStr)
+        ->orderBy('date')
+        ->orderBy('created_at')
+        ->get();
 
     $hasSellerIdColumn = schemaHasColumn('tb_sells', 'seller_id');
     $hasInvoiceColumn  = schemaHasColumn('tb_sells', 'no_invoice');
 
     $excludeStockOpname = function ($query) use ($hasSellerIdColumn, $hasInvoiceColumn) {
         if ($hasSellerIdColumn) {
-            $query->where('s.seller_id', '!=', 1);
-            return;
+            $query->where(function ($q) {
+                $q->whereNull('s.seller_id')
+                  ->orWhere('s.seller_id', '!=', 1);
+            });
         }
 
         if ($hasInvoiceColumn) {
@@ -105,7 +95,7 @@ class ReportController extends Controller
     };
 
     // Ambil transaksi per nota (pakai total_price agar konsisten dengan halaman home)
-    $salesRawQuery = \Illuminate\Support\Facades\DB::table('tb_sells as s')
+    $salesRawQuery = DB::table('tb_sells as s')
         ->join('tb_outgoing_goods as og', 'og.sell_id', '=', 's.id')
         ->when(
             schemaHasColumn('tb_sells', 'deleted_at'),
@@ -116,7 +106,7 @@ class ReportController extends Controller
             fn ($q) => $q->whereNull('og.deleted_at')
         )
         ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId))
-        ->whereBetween('s.date', [$startStr, $endStr])
+        ->whereBetween('s.date', [$start, $end])
         ->selectRaw('s.id, s.date, s.total_price, s.created_at, MAX(og.created_at) as og_created_at, MAX(og.recorded_by) as recorded_by')
         ->groupBy('s.id', 's.date', 's.total_price', 's.created_at');
 
@@ -125,6 +115,7 @@ class ReportController extends Controller
 
     // Kelompokkan transaksi per kasir+tanggal memakai total invoice kasir.
     $salesByCashierDate = [];
+    $cashierNamesByKey = [];
     foreach ($salesRaw as $sale) {
         $dateKey = $sale->date
             ? \Carbon\Carbon::parse($sale->date)->toDateString()
@@ -133,46 +124,69 @@ class ReportController extends Controller
         $total = (float) $sale->total_price;
         $key = $dateKey.'|'.$norm;
         $salesByCashierDate[$key] = ($salesByCashierDate[$key] ?? 0) + $total;
+        $cashierNamesByKey[$key] = trim((string) $sale->recorded_by);
     }
 
-    $omsetPerRevenue = [];
+    $rows = [];
+    $matchedSalesKeys = [];
+    $revenueGroups = $revenueRows->groupBy(function ($row) {
+        $dateKey = $row->date instanceof \Carbon\Carbon
+            ? $row->date->toDateString()
+            : \Carbon\Carbon::parse($row->date)->toDateString();
 
-    // Totals.status + omset per row.
-    $rowsForTotals = (clone $base)->orderBy('date')->orderBy('created_at')->get(['id','user_id','amount','date','created_at']);
-    $totalStatus   = 0;
-    $totalOmset    = 0;
+        return $dateKey.'|'.$this->normalizeName(optional($row->user)->name);
+    });
 
-    foreach ($rowsForTotals as $r) {
-        $dateKey = $r->date instanceof \Carbon\Carbon
-            ? $r->date->toDateString()
-            : \Carbon\Carbon::parse($r->date)->toDateString();
-        $cashierName = trim(optional($r->user)->name ?? '');
-        $norm    = $this->normalizeName($cashierName);
+    foreach ($revenueGroups as $key => $group) {
+        $first = $group->first();
+        $dateKey = $first->date instanceof \Carbon\Carbon
+            ? $first->date->toDateString()
+            : \Carbon\Carbon::parse($first->date)->toDateString();
+        $amount = (float) $group->sum('amount');
+        $omset = (float) ($salesByCashierDate[$key] ?? 0);
+        if (array_key_exists($key, $salesByCashierDate)) {
+            $matchedSalesKeys[$key] = true;
+        }
 
-        $dailyOmset              = (float) ($salesByCashierDate[$dateKey.'|'.$norm] ?? 0);
-        $omsetPerRevenue[$r->id] = $dailyOmset;
-        $totalOmset             += $dailyOmset;
-        $totalStatus            += ((float)$r->amount - $dailyOmset);
-    }
-
-    return \Yajra\DataTables\Facades\DataTables::eloquent($base)
-        ->addIndexColumn()
-        ->addColumn('name', fn ($row) => optional($row->user)->name ?? '-')
-        ->editColumn('amount', fn ($row) => (float) $row->amount)
-        ->addColumn('omset', fn ($row) => (float) ($omsetPerRevenue[$row->id] ?? 0))
-        ->editColumn('date', fn ($row) =>
-            $row->date instanceof \Carbon\Carbon
-                ? $row->date->toDateString()
-                : (\Carbon\Carbon::parse($row->date)->toDateString())
-        )
-        ->addColumn('status', fn ($row) => (float) $row->amount - (float) ($omsetPerRevenue[$row->id] ?? 0))
-        ->addColumn('action', fn ($row) =>
-            '<div class="d-flex justify-content-center">
-                <a href="'.route('report.detail', $row->id).'" class="btn btn-sm btn-success me-1">
+        $rows[] = [
+            'id' => $first->id,
+            'name' => optional($first->user)->name ?? '-',
+            'amount' => $amount,
+            'omset' => $omset,
+            'date' => $dateKey,
+            'status' => $amount - $omset,
+            'action' => '<div class="d-flex justify-content-center">
+                <a href="'.route('report.detail', $first->id).'" class="btn btn-sm btn-success me-1">
                     Detail Penjualan <i class="bx bx-right-arrow-alt"></i>
                 </a>
-            </div>'
-        )
+            </div>',
+        ];
+    }
+
+    foreach ($salesByCashierDate as $key => $omset) {
+        if (isset($matchedSalesKeys[$key])) {
+            continue;
+        }
+
+        [$dateKey] = explode('|', $key, 2);
+        $cashierName = $cashierNamesByKey[$key] ?: 'Belum input setoran';
+        $rows[] = [
+            'id' => null,
+            'name' => $cashierName.' (belum input setoran)',
+            'amount' => 0,
+            'omset' => (float) $omset,
+            'date' => $dateKey,
+            'status' => 0 - (float) $omset,
+            'action' => '<span class="text-muted">Belum ada setoran</span>',
+        ];
+    }
+
+    $totalAmount = (float) collect($rows)->sum('amount');
+    $totalOmset = (float) collect($rows)->sum('omset');
+    $totalStatus = $totalAmount - $totalOmset;
+
+    return DataTables::of(collect($rows))
+        ->addIndexColumn()
         ->rawColumns(['action'])
         ->with(['totals' => [
             'amount' => $totalAmount,
@@ -186,7 +200,7 @@ class ReportController extends Controller
 {
     // SELECT list dinamis
     $select = ['id','user_id','amount','date'];
-    if (schemaHasColumn('tb_daily_revenues','store_id')) {
+    if (schemaHasColumn('daily_revenues','store_id')) {
         $select[] = 'store_id';
     }
 
@@ -203,7 +217,7 @@ class ReportController extends Controller
 public function detailData(Request $request, $id)
 {
     $select = ['id','user_id','amount','date'];
-    if (schemaHasColumn('tb_daily_revenues','store_id')) {
+    if (schemaHasColumn('daily_revenues','store_id')) {
         $select[] = 'store_id';
     }
 
@@ -213,7 +227,7 @@ public function detailData(Request $request, $id)
 
     $filterDate  = \Carbon\Carbon::parse($revenue->date)->toDateString();
     $cashierName = trim(optional($revenue->user)->name ?? '');
-    $storeId     = schemaHasColumn('tb_daily_revenues','store_id') ? $revenue->store_id : null;
+    $storeId     = schemaHasColumn('daily_revenues','store_id') ? $revenue->store_id : optional($revenue->user)->store_id;
 
     $query = tb_outgoing_goods::query()
         ->select('id','uuid','product_id','sell_id','date','quantity_out','discount','recorded_by','description','created_at')

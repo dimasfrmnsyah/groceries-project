@@ -40,12 +40,18 @@ public function index(Request $request)
 
     $usingSpecificRange = $dateFrom && $dateTo;
     $hasSellerIdColumn  = Schema::hasColumn('tb_sells', 'seller_id');
+    $hasInvoiceColumn   = Schema::hasColumn('tb_sells', 'no_invoice');
 
     // Abaikan transaksi penyesuaian stok opname (seller_id=1 atau invoice SO-ADJ)
-    $excludeStockOpname = function ($query) use ($hasSellerIdColumn) {
+    $excludeStockOpname = function ($query) use ($hasSellerIdColumn, $hasInvoiceColumn) {
         if ($hasSellerIdColumn) {
-            $query->where('s.seller_id', '!=', 1);
-        } else {
+            $query->where(function ($q) {
+                $q->whereNull('s.seller_id')
+                  ->orWhere('s.seller_id', '!=', 1);
+            });
+        }
+
+        if ($hasInvoiceColumn) {
             $query->where(function ($q) {
                 $q->whereNull('s.no_invoice')
                   ->orWhere('s.no_invoice', 'not like', 'SO-ADJ-%');
@@ -63,6 +69,7 @@ public function index(Request $request)
             $cursor->addDay();
         }
         // group by DATE untuk sejajarkan omzet & HPP
+        $groupBySalesSql = "DATE(s.date)";
         $groupBySales = DB::raw("DATE(s.date) as group_val");
         $groupByHpp   = DB::raw("DATE(s.date) as group_val");
     } else {
@@ -70,6 +77,7 @@ public function index(Request $request)
         switch ($range) {
             case 'daily':
                 $labels = collect(range(6, 0))->map(fn($i) => Carbon::today()->subDays($i)->format('Y-m-d'));
+                $groupBySalesSql = "DATE(s.date)";
                 $groupBySales = DB::raw("DATE(s.date) as group_val");
                 $groupByHpp   = DB::raw("DATE(s.date) as group_val");
                 break;
@@ -81,6 +89,7 @@ public function index(Request $request)
             case 'yearly':
                 $startYear = now()->year - 4;
                 $labels = collect(range($startYear, now()->year))->map(fn($y) => (string) $y);
+                $groupBySalesSql = "YEAR(s.date)";
                 $groupBySales = DB::raw("YEAR(s.date) as group_val");
                 $groupByHpp   = DB::raw("YEAR(s.date) as group_val");
                 break;
@@ -88,6 +97,7 @@ public function index(Request $request)
             case 'monthly':
             default:
                 $labels = collect(range(5, 0))->map(fn($i) => now()->subMonths($i)->format('Y-m'));
+                $groupBySalesSql = "DATE_FORMAT(s.date, '%Y-%m')";
                 $groupBySales = DB::raw("DATE_FORMAT(s.date, '%Y-%m') as group_val");
                 $groupByHpp   = DB::raw("DATE_FORMAT(s.date, '%Y-%m') as group_val");
                 break;
@@ -95,10 +105,24 @@ public function index(Request $request)
     }
 
     // ===== Base queries =====
-    $salesQuery = DB::table('tb_sells as s')->select();
+    $salesQuery = DB::table('tb_sells as s')
+        ->join('tb_outgoing_goods as og', 'og.sell_id', '=', 's.id')
+        ->when(
+            Schema::hasColumn('tb_sells', 'deleted_at'),
+            fn ($q) => $q->whereNull('s.deleted_at')
+        )
+        ->when(
+            Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
+            fn ($q) => $q->whereNull('og.deleted_at')
+        )
+        ->select();
     $hppBase = DB::table('tb_outgoing_goods as og')
         ->join('tb_sells as s', 'og.sell_id', '=', 's.id')
         ->join('tb_products as p', 'og.product_id', '=', 'p.id')
+        ->when(
+            Schema::hasColumn('tb_sells', 'deleted_at'),
+            fn ($q) => $q->whereNull('s.deleted_at')
+        )
         ->when(
             Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
             fn ($q) => $q->whereNull('og.deleted_at')
@@ -125,10 +149,21 @@ public function index(Request $request)
         $end   = now()->endOfDay();
 
         $salesRawQuery = DB::table('tb_sells as s')
+            ->join('tb_outgoing_goods as og', 'og.sell_id', '=', 's.id')
+            ->when(
+                Schema::hasColumn('tb_sells', 'deleted_at'),
+                fn ($q) => $q->whereNull('s.deleted_at')
+            )
+            ->when(
+                Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
+                fn ($q) => $q->whereNull('og.deleted_at')
+            )
             ->when($storeId, fn($q) => $q->where('s.store_id', $storeId))
-            ->whereBetween('s.date', [$start, $end]);
+            ->whereBetween('s.date', [$start, $end])
+            ->selectRaw('s.id, s.date, s.total_price')
+            ->groupBy('s.id', 's.date', 's.total_price');
         $excludeStockOpname($salesRawQuery);
-        $salesRaw = $salesRawQuery->get(['s.date', 's.total_price']);
+        $salesRaw = $salesRawQuery->get();
 
         $hppRaw = (clone $hppBase)
             ->whereBetween('s.date', [$start, $end])
@@ -150,13 +185,19 @@ public function index(Request $request)
         }
     } else {
         // OMZET by buckets
-        $salesData = DB::table('tb_sells as s')
-            ->select($groupBySales, DB::raw('SUM(s.total_price) as total'))
-            ->when($storeId, fn($q) => $q->where('s.store_id', $storeId))
-            ->when($usingSpecificRange, fn($q) => $q->whereBetween('s.date', [$dateFrom, $dateTo]))
-            ->groupBy('group_val');
-        $excludeStockOpname($salesData);
-        $salesData = $salesData->pluck('total', 'group_val');
+        $salesSub = (clone $salesQuery)
+            ->select('s.id', 's.date', 's.total_price')
+            ->groupBy('s.id', 's.date', 's.total_price');
+
+        $bucketedSales = DB::query()
+            ->fromSub($salesSub, 's')
+            ->selectRaw($groupBySalesSql.' as group_val, s.total_price as total_price');
+
+        $salesData = DB::query()
+            ->fromSub($bucketedSales, 'bucketed_sales')
+            ->selectRaw('group_val, SUM(total_price) as total')
+            ->groupBy('group_val')
+            ->pluck('total', 'group_val');
 
         // HPP (COGS) by buckets
         $hppData = (clone $hppBase)
@@ -178,6 +219,10 @@ public function index(Request $request)
     $topProductsQuery = DB::table('tb_outgoing_goods as og')
         ->join('tb_products as p', 'og.product_id', '=', 'p.id')
         ->join('tb_sells as s', 'og.sell_id', '=', 's.id')
+        ->when(
+            Schema::hasColumn('tb_sells', 'deleted_at'),
+            fn ($q) => $q->whereNull('s.deleted_at')
+        )
         ->when(
             Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
             fn ($q) => $q->whereNull('og.deleted_at')
