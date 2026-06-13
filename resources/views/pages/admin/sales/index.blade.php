@@ -348,6 +348,7 @@
                     window.location = url.toString();
                 });
             }
+            setTimeout(() => $('#item-code').focus(), 100);
         });
 
         $('#qty-modal').on('keydown', function(e) {
@@ -400,28 +401,60 @@
                 $('#item-code').focus();
             }
         })
+
+        const normalizeQty = (value) => {
+            const qty = parseInt(value, 10);
+            return Number.isFinite(qty) && qty > 0 ? qty : 1;
+        }
+
+        const getItemStock = (item) => {
+            const stock = parseInt(item && item.current_stock, 10);
+            return Number.isFinite(stock) && stock > 0 ? stock : 0;
+        }
+
+        const showStockLimit = (item, stock) => {
+            const productName = (item && item.product_name) || 'Item';
+            alert(`Stok ${productName} hanya ${stock}. Qty tidak bisa lebih dari ${stock}.`);
+        }
+
+        const addItemToCart = (item, qtyValue) => {
+            if (!item) {
+                alert('Item tidak ditemukan');
+                return false;
+            }
+
+            const qty = normalizeQty(qtyValue);
+            const stock = getItemStock(item);
+            const findIndex = selectedRowData.findIndex(row => parseInt(row.id, 10) === parseInt(item.id, 10));
+            const currentQty = findIndex !== -1 ? normalizeQty(selectedRowData[findIndex].qty) : 0;
+            const nextQty = currentQty + qty;
+
+            if (stock <= 0 || nextQty > stock) {
+                showStockLimit(item, stock);
+                return false;
+            }
+
+            if (findIndex !== -1) {
+                selectedRowData[findIndex].qty = nextQty;
+            } else {
+                selectedRowData.push({...item, qty: qty, discount: Number(item.discount || 0), total: 0});
+            }
+
+            handleData();
+            return true;
+        }
         
 
         // Function after fill the quantity
         const saveQty = () => {
-            let qtyValue = $('#qty-item').val();
-            temporaryItemSelect = {...temporaryItemSelect, qty:qtyValue, discount: 0, total:0}
-            if(temporaryItemSelect.current_stock < parseInt(qtyValue)) {
-                alert('stock tidak cukup');
+            let qtyValue = normalizeQty($('#qty-item').val());
+            if (addItemToCart(temporaryItemSelect, qtyValue)) {
+                $('#qty-item').val(null);
+                $('#select-product').val(null).trigger('change');
+                $('#select-product').focus();
+                $('#select-product').select2('open');
+                $('#qty-modal').modal('toggle');
             }
-            // selectedRowData.push(temporaryItemSelect);
-            let findIndex = selectedRowData.findIndex(item => temporaryItemSelect.id == item.id);
-            if(findIndex !== -1) {
-                selectedRowData[findIndex].qty = parseInt(selectedRowData[findIndex].qty) + parseInt(qtyValue);
-            } else {
-                selectedRowData.push(temporaryItemSelect);
-            }
-            handleData();
-            $('#qty-item').val(null);
-            $('#select-product').val(null).trigger('change');
-            $('#select-product').focus();
-            $('#select-product').select2('open');
-            $('#qty-modal').modal('toggle');
         }
 
         $(document).on('focus', '#qty', function () {
@@ -603,32 +636,16 @@
 
 
         const processBarcode = debounce((barcode) => {
-            let scanBarcodeVal = $('#scan-barcode').val();
-            let qty = parseInt($('#qty').val(), 10);
-            if (!Number.isFinite(qty) || qty <= 0) {
-                qty = 1;
-            }
+            let qty = normalizeQty($('#qty').val());
             $.ajax({
                 url:`{{ route('options.incoming_goods') }}`,
                 method:'GET',
-                data: {'search_term': barcode, 'type': 'barcode'},
+                data: {'search_term': barcode, 'type': 'barcode', 'store_id': $('#store-id').val()},
                 success: function(response) {
-                    let data = response.data[0];
-                    if(data.current_stock < qty) {
-                        alert('Stok Tidak Cukup');
-                        return;
+                    let data = response.data && response.data.length ? response.data[0] : null;
+                    if (addItemToCart(data, qty)) {
+                        resetInput()
                     }
-                    data = {...data, qty: qty, discount: 0, total:0};
-                    let findIndex = selectedRowData.findIndex(item => data.id == item.id);
-                    if(findIndex !== -1) {
-                        selectedRowData[findIndex].qty = parseInt(selectedRowData[findIndex].qty) + qty;
-                    } else {
-                        selectedRowData.push(data);
-                    }
-
-                    resetInput()
-
-                    handleData();
                 }, error: function(err) {
                     console.log(err)
                 }
@@ -754,26 +771,13 @@
         $('#table-item').on('click', 'tbody tr', function() {
             ensureItemTableInitialized();
             let data = itemTable.row(this).data();
-            let qty = $('#qty').val();
+            let qty = normalizeQty($('#qty').val());
             if(data) {
-                if(data.current_stock < qty) {
-                    alert('Stok Tidak Cukup');
-                    return;
-                }
-
-                data = {...data, qty: $('#qty').val(), discount: 0, total:0};
-            
-                let findIndex = selectedRowData.findIndex(item => data.id == item.id);
-                if(findIndex !== -1) {
-                    selectedRowData[findIndex].qty = parseInt(selectedRowData[findIndex].qty) + parseInt(qty);
-                } else {
-                    selectedRowData.push(data);
-                }
-
                 var itemModal = bootstrap.Modal.getInstance(document.getElementById('item-modal'));
-                handleData();
-                resetInput();
-                itemModal.hide();
+                if (addItemToCart(data, qty)) {
+                    resetInput();
+                    itemModal.hide();
+                }
             } else {
                 return false; 
             }
@@ -788,9 +792,22 @@
         }
 
         const onQtyChange = debounce((index, value)=> {
-            selectedRowData[index].qty = value;
+            const item = selectedRowData[index];
+            if (!item) {
+                return;
+            }
+
+            const qty = normalizeQty(value);
+            const stock = getItemStock(item);
+
+            if (qty > stock) {
+                showStockLimit(item, stock);
+                selectedRowData[index].qty = stock;
+            } else {
+                selectedRowData[index].qty = qty;
+            }
             handleData();
-        }, 500);
+        }, 300);
 
         const onDiscountChange = debounce((index, value)=> {
             selectedRowData[index].discount = value;
@@ -815,10 +832,12 @@
             let productList = $('#product-list');
             if(selectedRowData.length > 0) {
                 selectedRowData.forEach((item, index) => {
+                    item.qty = normalizeQty(item.qty);
+                    item.discount = Number(item.discount || 0);
+                    item.selling_price = Number(item.selling_price || 0);
                     const tiers = item.tier_prices || {};
-                    if(item.tier_prices !== null) {
+                    if(item.tier_prices) {
                         const thresholds = Object.keys(item.tier_prices).map(Number).sort((a, b) => b - a);
-                        let unitPrice = 0;
                         for (const t of thresholds) {
                             if (item.qty >= t) {
                                 item.selling_price = Number(tiers[t]);
@@ -836,7 +855,7 @@
                             <td>${index + 1}</td>
                             <td>${item.product_code}</td>
                             <td>${item.product_name}</td>
-                            <td><input type="number" name="products[${index}][qty]" style="width:50px ;text-align:right; border:1px solid #ced4da" value="${item.qty}" oninput="onQtyChange(${index}, this.value)"></td>
+                            <td><input type="number" name="products[${index}][qty]" min="1" max="${getItemStock(item)}" style="width:50px ;text-align:right; border:1px solid #ced4da" value="${item.qty}" oninput="onQtyChange(${index}, this.value)"></td>
                             <td style="text-align:right">${formatRupiah(item.selling_price)}</td>
                             
                             <td style="text-align:right">${formatRupiah(item.total)}</td>
@@ -864,6 +883,8 @@
                         <td colspan="8" class="text-center"><i class="bx bx-message-alt-error"></i> Data Kosong</td>
                     </tr>
                 `);
+                formData = {'transaction_date': $('#transaction-date').val(), 'no_invoice': $('#invoice-number').val(), 'customer_money': 0, 'total_price':0, 'products': []};
+                $('#total-price').html(formatRupiah(0));
             }
         };
 
@@ -878,6 +899,10 @@
             isPaying = busy;
             $('#btn-payment-print, #btn-payment').prop('disabled', busy);
         };
+
+        const getAjaxErrorMessage = (err) => {
+            return (err.responseJSON && err.responseJSON.message) || 'Terjadi kesalahan pada pengisian form, harap periksa kembali';
+        }
 
         // API
         const onPayment = () => {
@@ -927,7 +952,7 @@
                         Toast.fire({
                             icon: 'error',
                             title: 'Error',
-                            text: 'Terjadi kesalahan pada pengisian form, harap periksa kembali',
+                            text: getAjaxErrorMessage(err),
                             background: '#f27474', 
                             color: '#fff' 
                         });
@@ -1028,7 +1053,7 @@
                             Toast.fire({
                             icon:'error',
                             title: 'error',
-                            text: 'Terjadi kesalahan pada pengisian form, harap periksa kembali',
+                            text: getAjaxErrorMessage(err),
                             background: '#f27474', 
                             color: '#fff' 
                             });

@@ -76,6 +76,29 @@ class TbSalesController extends Controller
                 'message' => 'Store wajib dipilih.'
             ], 422);
         }
+
+        $requestedQtyByProduct = collect($request->data['products'])
+            ->groupBy('id')
+            ->map(function ($items) {
+                return $items->sum(fn ($item) => (int) ($item['qty'] ?? 0));
+            });
+
+        $availableStock = $this->currentStockByProductIds($store_id, $requestedQtyByProduct->keys()->all());
+        $productNames = DB::table('tb_products')
+            ->whereIn('id', $requestedQtyByProduct->keys()->all())
+            ->pluck('product_name', 'id');
+
+        foreach ($requestedQtyByProduct as $productId => $qty) {
+            $stock = (int) ($availableStock[$productId] ?? 0);
+            if ($qty > $stock) {
+                $productName = $productNames[$productId] ?? 'Produk';
+                return response()->json([
+                    'success' => false,
+                    'message' => "Stok {$productName} hanya {$stock}. Qty tidak boleh lebih dari {$stock}."
+                ], 422);
+            }
+        }
+
         DB::beginTransaction();
         try {
             $storeOnline = (int) tb_stores::where('id', $store_id)->value('is_online') === 1;
@@ -123,5 +146,67 @@ class TbSalesController extends Controller
                 'message' => $e->getMessage()
             ]);
         }
+    }
+
+    private function currentStockByProductIds(int $storeId, array $productIds): array
+    {
+        if (empty($productIds)) {
+            return [];
+        }
+
+        $hasIncomingStore = Schema::hasColumn('tb_incoming_goods', 'store_id');
+        $hasPendingIn = Schema::hasColumn('tb_incoming_goods', 'is_pending_stock');
+        $hasPendingOut = Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock');
+        $hasIncomingDeleted = Schema::hasColumn('tb_incoming_goods', 'deleted_at');
+        $hasOutgoingDeleted = Schema::hasColumn('tb_outgoing_goods', 'deleted_at');
+
+        $incomingSub = DB::table('tb_incoming_goods as ig')
+            ->when($hasIncomingDeleted, fn ($q) => $q->whereNull('ig.deleted_at'))
+            ->when(
+                $hasIncomingStore,
+                fn ($q) => $q->where(function ($qq) use ($storeId) {
+                    $qq->where('ig.store_id', $storeId)
+                        ->orWhereExists(function ($ex) use ($storeId) {
+                            $ex->select(DB::raw(1))
+                                ->from('tb_purchases as p')
+                                ->whereColumn('p.id', 'ig.purchase_id')
+                                ->where('p.store_id', $storeId);
+                        });
+                }),
+                fn ($q) => $q->join('tb_purchases as p', 'ig.purchase_id', '=', 'p.id')
+                    ->where('p.store_id', $storeId)
+            )
+            ->when($hasPendingIn, function ($q) {
+                $q->where(function ($qq) {
+                    $qq->whereNull('ig.is_pending_stock')
+                        ->orWhere('ig.is_pending_stock', 0);
+                });
+            })
+            ->select('ig.product_id', DB::raw('SUM(ig.stock) as total_in'))
+            ->groupBy('ig.product_id');
+
+        $outgoingSub = DB::table('tb_outgoing_goods as og')
+            ->join('tb_sells as sl', 'og.sell_id', '=', 'sl.id')
+            ->when($hasOutgoingDeleted, fn ($q) => $q->whereNull('og.deleted_at'))
+            ->where('sl.store_id', $storeId)
+            ->when($hasPendingOut, function ($q) {
+                $q->where(function ($qq) {
+                    $qq->whereNull('og.is_pending_stock')
+                        ->orWhere('og.is_pending_stock', 0);
+                });
+            })
+            ->select('og.product_id', DB::raw('SUM(og.quantity_out) as total_out'))
+            ->groupBy('og.product_id');
+
+        $stockExpression = '(COALESCE(incoming.total_in, 0) - COALESCE(outgoing.total_out, 0))';
+
+        return DB::table('tb_products as p')
+            ->leftJoinSub($incomingSub, 'incoming', fn ($join) => $join->on('incoming.product_id', '=', 'p.id'))
+            ->leftJoinSub($outgoingSub, 'outgoing', fn ($join) => $join->on('outgoing.product_id', '=', 'p.id'))
+            ->whereIn('p.id', $productIds)
+            ->select('p.id', DB::raw($stockExpression.' as current_stock'))
+            ->pluck('current_stock', 'id')
+            ->map(fn ($stock) => max(0, (int) $stock))
+            ->all();
     }
 }

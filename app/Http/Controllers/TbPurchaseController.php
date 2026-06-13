@@ -87,13 +87,28 @@ class TbPurchaseController extends Controller
     if (!$storeId) {
         return back()->with('error', 'Store wajib dipilih.');
     }
+
+    $validated = $request->validate([
+        'supplier_id' => 'required|integer|exists:tb_suppliers,id',
+        'products' => 'required|array|min:1',
+        'products.*.product_id' => 'required|integer|exists:tb_products,id',
+        'products.*.stock' => 'required|integer|min:1',
+        'products.*.description' => 'nullable|string',
+    ]);
+
+    $productPrices = tb_products::whereIn('id', collect($validated['products'])->pluck('product_id')->all())
+        ->pluck('purchase_price', 'id');
+    $totalPrice = collect($validated['products'])->sum(function ($product) use ($productPrices) {
+        return ((float) ($productPrices[$product['product_id']] ?? 0)) * ((int) $product['stock']);
+    });
+
     DB::beginTransaction();
     try {
         // Simpan ke tb_purchase
         $purchase = tb_purchase::create([
-            'supplier_id' => $request->supplier_id,
+            'supplier_id' => $validated['supplier_id'],
             'store_id' => $storeId,
-            'total_price' => $request->total_price,
+            'total_price' => $totalPrice,
             'created_by' => auth()->id(),
         ]);
         $storeOnline = (int) tb_stores::where('id', $storeId)->value('is_online') === 1;
@@ -102,7 +117,7 @@ class TbPurchaseController extends Controller
         $hasPendingStock = Schema::hasColumn('tb_incoming_goods', 'is_pending_stock');
         
         // Simpan produk ke tb_incoming_goods
-        foreach ($request->products as $product) {
+        foreach ($validated['products'] as $product) {
             $payload = [
                 'purchase_id' => $purchase->id, // ✅ Perbaikan: tambahkan purchase_id
                 'product_id' => $product['product_id'],
@@ -135,7 +150,7 @@ class TbPurchaseController extends Controller
      */
     public function edit($id)
     {
-        $purchase = tb_purchase::with(['incomingGoods', 'supplier'])->findOrFail($id);
+        $purchase = tb_purchase::with(['incomingGoods.product', 'supplier'])->findOrFail($id);
 
         $suppliers = tb_suppliers::query()
             ->where('code', '!=', 'SO-ADJ')
@@ -158,6 +173,21 @@ class TbPurchaseController extends Controller
         if (!$storeId) {
             return back()->with('error', 'Store wajib dipilih.');
         }
+
+        $validated = $request->validate([
+            'supplier_id' => 'required|integer|exists:tb_suppliers,id',
+            'products' => 'required|array|min:1',
+            'products.*.product_id' => 'required|integer|exists:tb_products,id',
+            'products.*.stock' => 'required|integer|min:1',
+            'products.*.description' => 'nullable|string',
+        ]);
+
+        $productPrices = tb_products::whereIn('id', collect($validated['products'])->pluck('product_id')->all())
+            ->pluck('purchase_price', 'id');
+        $totalPrice = collect($validated['products'])->sum(function ($product) use ($productPrices) {
+            return ((float) ($productPrices[$product['product_id']] ?? 0)) * ((int) $product['stock']);
+        });
+
         DB::beginTransaction();
         try {
             // Ambil data pembelian yang ingin diperbarui
@@ -165,9 +195,9 @@ class TbPurchaseController extends Controller
     
             // Update data pembelian
             $purchase->update([
-                'supplier_id' => $request->supplier_id,
+                'supplier_id' => $validated['supplier_id'],
                 'store_id' => $storeId,
-                'total_price' => $request->total_price,
+                'total_price' => $totalPrice,
             ]);
 
             $storeOnline = (int) tb_stores::where('id', $storeId)->value('is_online') === 1;
@@ -179,7 +209,7 @@ class TbPurchaseController extends Controller
             tb_incoming_goods::where('purchase_id', $id)->delete();
     
             // Simpan produk baru yang diinputkan user
-            foreach ($request->products as $product) {
+            foreach ($validated['products'] as $product) {
                 $payload = [
                     'purchase_id' => $id,
                     'product_id' => $product['product_id'],
