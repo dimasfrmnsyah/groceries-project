@@ -21,6 +21,9 @@ use App\Http\Controllers\TbSellController;
 use App\Http\Controllers\SalesReportController;
 use App\Http\Controllers\OrderStockController;
 use App\Http\Controllers\StockThresholdController;
+use App\Http\Controllers\ItemMovingController;
+use App\Http\Controllers\StockTransferController;
+use App\Http\Controllers\AccountingController;
 use App\Models\User;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;
@@ -193,6 +196,60 @@ Route::get('/sync/manual', [SyncController::class, 'manual'])->name('sync.manual
     Route::prefix('stock-threshold')->group(function () {
         Route::get('/', [StockThresholdController::class, 'index'])->name('stock-threshold.index');
         Route::post('/', [StockThresholdController::class, 'save'])->name('stock-threshold.save');
+    });
+
+    Route::prefix('item-moving')->group(function () {
+        Route::get('/', [ItemMovingController::class, 'index'])->name('item-moving.index');
+    });
+
+    Route::prefix('stock-transfer')->group(function () {
+        Route::get('/', [StockTransferController::class, 'index'])->name('stock-transfer.index');
+        Route::post('/', [StockTransferController::class, 'store'])->name('stock-transfer.store');
+    });
+
+    Route::prefix('accounting')->name('accounting.')->group(function () {
+        Route::get('/accounts', [AccountingController::class, 'accounts'])->name('accounts.index');
+        Route::get('/accounts/create', [AccountingController::class, 'createAccount'])->name('accounts.create');
+        Route::post('/accounts', [AccountingController::class, 'storeAccount'])->name('accounts.store');
+        Route::get('/accounts/{id}/edit', [AccountingController::class, 'editAccount'])->name('accounts.edit');
+        Route::put('/accounts/{id}', [AccountingController::class, 'updateAccount'])->name('accounts.update');
+        Route::delete('/accounts/{id}', [AccountingController::class, 'destroyAccount'])->name('accounts.destroy');
+        Route::post('/settings', [AccountingController::class, 'updateSettings'])->name('settings.update');
+        Route::get('/cash-book', [AccountingController::class, 'cashBook'])->name('cash-book.index');
+        Route::get('/budgeting', [AccountingController::class, 'budgeting'])->name('budgeting.index');
+        Route::get('/budgeting/create', [AccountingController::class, 'createBudgeting'])->name('budgeting.create');
+        Route::post('/budgeting', [AccountingController::class, 'storeBudgeting'])->name('budgeting.store');
+        Route::get('/budgeting/{id}/edit', [AccountingController::class, 'editBudgeting'])->name('budgeting.edit');
+        Route::put('/budgeting/{id}', [AccountingController::class, 'updateBudgeting'])->name('budgeting.update');
+        Route::delete('/budgeting/{id}', [AccountingController::class, 'destroyBudgeting'])->name('budgeting.destroy');
+        Route::get('/expenses', [AccountingController::class, 'expenses'])->name('expenses.index');
+        Route::get('/expenses/create', [AccountingController::class, 'createExpense'])->name('expenses.create');
+        Route::post('/expenses', [AccountingController::class, 'storeExpense'])->name('expenses.store');
+        Route::get('/expenses/{id}/edit', [AccountingController::class, 'editExpense'])->name('expenses.edit');
+        Route::put('/expenses/{id}', [AccountingController::class, 'updateExpense'])->name('expenses.update');
+        Route::delete('/expenses/{id}', [AccountingController::class, 'destroyExpense'])->name('expenses.destroy');
+        Route::get('/receivables', [AccountingController::class, 'receivables'])->name('receivables.index');
+        Route::get('/receivables/create', [AccountingController::class, 'createReceivable'])->name('receivables.create');
+        Route::post('/receivables', [AccountingController::class, 'storeReceivable'])->name('receivables.store');
+        Route::get('/receivables/{id}/edit', [AccountingController::class, 'editReceivable'])->name('receivables.edit');
+        Route::put('/receivables/{id}', [AccountingController::class, 'updateReceivable'])->name('receivables.update');
+        Route::delete('/receivables/{id}', [AccountingController::class, 'destroyReceivable'])->name('receivables.destroy');
+        Route::get('/receivables/{id}/payment', [AccountingController::class, 'showReceivablePayment'])->name('receivables.payment');
+        Route::post('/receivables/{id}/pay', [AccountingController::class, 'payReceivable'])->name('receivables.pay');
+        Route::get('/supplier-debts', [AccountingController::class, 'supplierDebts'])->name('supplier-debts.index');
+        Route::get('/supplier-debts/create', [AccountingController::class, 'createSupplierDebt'])->name('supplier-debts.create');
+        Route::post('/supplier-debts', [AccountingController::class, 'storeSupplierDebt'])->name('supplier-debts.store');
+        Route::get('/supplier-debts/{id}/edit', [AccountingController::class, 'editSupplierDebt'])->name('supplier-debts.edit');
+        Route::put('/supplier-debts/{id}', [AccountingController::class, 'updateSupplierDebt'])->name('supplier-debts.update');
+        Route::delete('/supplier-debts/{id}', [AccountingController::class, 'destroySupplierDebt'])->name('supplier-debts.destroy');
+        Route::get('/supplier-debts/{id}/payment', [AccountingController::class, 'showSupplierDebtPayment'])->name('supplier-debts.payment');
+        Route::post('/supplier-debts/{id}/pay', [AccountingController::class, 'paySupplierDebt'])->name('supplier-debts.pay');
+        Route::get('/cash-opname', [AccountingController::class, 'cashOpname'])->name('cash-opname.index');
+        Route::get('/cash-opname/create', [AccountingController::class, 'createCashOpname'])->name('cash-opname.create');
+        Route::post('/cash-opname', [AccountingController::class, 'storeCashOpname'])->name('cash-opname.store');
+        Route::get('/cash-opname/{id}/edit', [AccountingController::class, 'editCashOpname'])->name('cash-opname.edit');
+        Route::put('/cash-opname/{id}', [AccountingController::class, 'updateCashOpname'])->name('cash-opname.update');
+        Route::delete('/cash-opname/{id}', [AccountingController::class, 'destroyCashOpname'])->name('cash-opname.destroy');
     });
 
     Route::prefix('settings')->group(function() {

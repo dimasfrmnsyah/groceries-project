@@ -110,6 +110,11 @@
                     <input type="number" id="total_price_display" class="form-control" value="0" readonly>
                     <input type="hidden" name="total_price" id="total_price" value="0">
                 </div>
+                <div class="col-md-6 mb-3">
+                    <label for="supplier_budget" class="form-label">Budget Supplier</label>
+                    <input type="number" name="supplier_budget" id="supplier_budget" class="form-control" min="0" step="0.01" placeholder="Opsional">
+                    <small class="text-muted">Jika total pembelian melebihi budget, selisih otomatis masuk hutang supplier.</small>
+                </div>
             </div>
 
             <h5 class="mt-4">Input Produk</h5>

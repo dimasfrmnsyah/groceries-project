@@ -12,7 +12,7 @@ class TbMasterRole extends Model
     public function menus()
     {
         return $this->belongsToMany(
-            TbMasterMenus::class,
+            tb_master_menus::class,
             'tb_master_menu_roles',
             'role_id',
             'menu_id'

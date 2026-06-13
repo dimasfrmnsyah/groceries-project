@@ -75,7 +75,11 @@ class DailySalesReportController extends Controller
             // abaikan penyesuaian stock opname (invoice dibuat otomatis)
             ->where(function ($q) {
                 $q->whereNull('s.no_invoice')
-                  ->orWhere('s.no_invoice', 'not like', 'SO-ADJ-%');
+                  ->orWhere(function ($qq) {
+                      $qq->where('s.no_invoice', 'not like', 'SO-ADJ-%')
+                         ->where('s.no_invoice', 'not like', 'AR-%')
+                         ->where('s.no_invoice', 'not like', 'TRF-%');
+                  });
             })
             // abaikan pencatatan khusus stock opname
             ->when(Schema::hasColumn('tb_outgoing_goods','recorded_by'),
@@ -132,7 +136,11 @@ class DailySalesReportController extends Controller
             ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId))
             ->where(function ($q) {
                 $q->whereNull('s.no_invoice')
-                  ->orWhere('s.no_invoice', 'not like', 'SO-ADJ-%');
+                  ->orWhere(function ($qq) {
+                      $qq->where('s.no_invoice', 'not like', 'SO-ADJ-%')
+                         ->where('s.no_invoice', 'not like', 'AR-%')
+                         ->where('s.no_invoice', 'not like', 'TRF-%');
+                  });
             })
             ->when(Schema::hasColumn('tb_outgoing_goods','recorded_by'),
                 fn($q) => $q->whereRaw('LOWER(COALESCE(TRIM(tb_outgoing_goods.recorded_by), "")) != ?', ['stock opname'])
@@ -259,7 +267,11 @@ class DailySalesReportController extends Controller
             // abaikan penyesuaian stock opname (invoice dibuat otomatis)
             ->where(function ($q) {
                 $q->whereNull('s.no_invoice')
-                  ->orWhere('s.no_invoice', 'not like', 'SO-ADJ-%');
+                  ->orWhere(function ($qq) {
+                      $qq->where('s.no_invoice', 'not like', 'SO-ADJ-%')
+                         ->where('s.no_invoice', 'not like', 'AR-%')
+                         ->where('s.no_invoice', 'not like', 'TRF-%');
+                  });
             })
             // abaikan pencatatan khusus stock opname
             ->when(

@@ -61,13 +61,19 @@ class CashierMonthlyReportController extends Controller
 
         $excludeStockOpname = function ($query) use ($hasSellerIdColumn, $hasInvoiceColumn) {
             if ($hasSellerIdColumn) {
-                $query->where('s.seller_id', '!=', 1);
-                return;
+                $query->where(function ($q) {
+                    $q->whereNull('s.seller_id')
+                      ->orWhere('s.seller_id', '!=', 1);
+                });
             }
             if ($hasInvoiceColumn) {
                 $query->where(function ($q) {
                     $q->whereNull('s.no_invoice')
-                      ->orWhere('s.no_invoice', 'not like', 'SO-ADJ-%');
+                      ->orWhere(function ($qq) {
+                          $qq->where('s.no_invoice', 'not like', 'SO-ADJ-%')
+                             ->where('s.no_invoice', 'not like', 'AR-%')
+                             ->where('s.no_invoice', 'not like', 'TRF-%');
+                      });
                 });
             }
         };
@@ -195,13 +201,19 @@ class CashierMonthlyReportController extends Controller
 
         $excludeStockOpname = function ($query) use ($hasSellerIdColumn, $hasInvoiceColumn) {
             if ($hasSellerIdColumn) {
-                $query->where('s.seller_id', '!=', 1);
-                return;
+                $query->where(function ($q) {
+                    $q->whereNull('s.seller_id')
+                      ->orWhere('s.seller_id', '!=', 1);
+                });
             }
             if ($hasInvoiceColumn) {
                 $query->where(function ($q) {
                     $q->whereNull('s.no_invoice')
-                      ->orWhere('s.no_invoice', 'not like', 'SO-ADJ-%');
+                      ->orWhere(function ($qq) {
+                          $qq->where('s.no_invoice', 'not like', 'SO-ADJ-%')
+                             ->where('s.no_invoice', 'not like', 'AR-%')
+                             ->where('s.no_invoice', 'not like', 'TRF-%');
+                      });
                 });
             }
         };

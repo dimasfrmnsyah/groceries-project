@@ -54,7 +54,11 @@ public function index(Request $request)
         if ($hasInvoiceColumn) {
             $query->where(function ($q) {
                 $q->whereNull('s.no_invoice')
-                  ->orWhere('s.no_invoice', 'not like', 'SO-ADJ-%');
+                  ->orWhere(function ($qq) {
+                      $qq->where('s.no_invoice', 'not like', 'SO-ADJ-%')
+                         ->where('s.no_invoice', 'not like', 'AR-%')
+                         ->where('s.no_invoice', 'not like', 'TRF-%');
+                  });
             });
         }
     };
@@ -244,6 +248,29 @@ public function index(Request $request)
         $topProducts = $topProductsQuery->get();
         $lowStockItems = collect();
 
+    $monthStart = now('Asia/Jakarta')->startOfMonth();
+    $monthEnd = now('Asia/Jakarta')->endOfMonth();
+    $dailyMonthLabels = collect();
+    $cursor = $monthStart->copy();
+    while ($cursor->lte($monthEnd)) {
+        $dailyMonthLabels->push($cursor->format('Y-m-d'));
+        $cursor->addDay();
+    }
+
+    $dailyMonthQuery = DB::table('tb_sells as s')
+        ->when(
+            Schema::hasColumn('tb_sells', 'deleted_at'),
+            fn ($q) => $q->whereNull('s.deleted_at')
+        )
+        ->whereBetween('s.date', [$monthStart->toDateString(), $monthEnd->toDateString()])
+        ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId));
+    $excludeStockOpname($dailyMonthQuery);
+    $dailyMonthRaw = $dailyMonthQuery
+        ->selectRaw('DATE(s.date) as sale_date, SUM(s.total_price) as total')
+        ->groupBy('sale_date')
+        ->pluck('total', 'sale_date');
+    $dailyMonthSales = $dailyMonthLabels->map(fn ($date) => (float) ($dailyMonthRaw[$date] ?? 0));
+
     return view('home', [
         'stores'          => $stores,
         'selectedStoreId' => $selectedStoreId,
@@ -257,6 +284,8 @@ public function index(Request $request)
         'totalLaba'       => $totalLaba,
         'topProducts'     => $topProducts,
         'lowStockItems'   => $lowStockItems,
+        'dailyMonthLabels'=> $dailyMonthLabels->values(),
+        'dailyMonthSales' => $dailyMonthSales->values(),
     ]);
 }
 

@@ -134,6 +134,7 @@ class TbSalesController extends Controller
                 }
                 tb_outgoing_goods::create($payload);
             }
+            AccountingController::postSalesLedger($sell->id);
             DB::commit();
             return response()->json([
                 'success' => true,

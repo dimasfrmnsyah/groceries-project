@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\tb_master_roles;
+use App\Models\TbMasterRole;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -13,7 +13,7 @@ class TbMasterRolesController extends Controller
     public function index(Request $request)
     {
         try {
-            $roles = tb_master_roles::all();
+            $roles = TbMasterRole::all();
             if($request->ajax()) {
             return DataTables::of($roles)
                         ->addColumn('action', function ($role) {
@@ -40,7 +40,7 @@ class TbMasterRolesController extends Controller
         ]);
         DB::beginTransaction();
         try {
-            tb_master_roles::create($data);
+            TbMasterRole::create($data);
             DB::commit();
             return redirect('/settings/roles')->with('success', 'Data berhasil dikirim!');
 
@@ -58,7 +58,7 @@ class TbMasterRolesController extends Controller
 
     public function edit(Request $request, $id)
     {
-        $role = tb_master_roles::find($id);
+        $role = TbMasterRole::find($id);
         return view('pages.admin.settings.roles.create', compact('role'));
     }
 
@@ -71,7 +71,7 @@ class TbMasterRolesController extends Controller
 
         DB::beginTransaction();
         try {
-            tb_master_roles::where('id', $id)->update($data);
+            TbMasterRole::where('id', $id)->update($data);
             DB::commit();
             return redirect('/settings/roles')->with('success', 'Data berhasil diperbaharui!');
 
@@ -85,7 +85,7 @@ class TbMasterRolesController extends Controller
     public function destroy($id)
     {
         try {
-            tb_master_roles::where('id', $id)->delete();
+            TbMasterRole::where('id', $id)->delete();
 
             return resp_success('Data berhasil dihapus');
         } catch(\Exception $e) {
