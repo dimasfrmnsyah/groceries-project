@@ -126,6 +126,18 @@
     </div>
 @endsection
 
+@php
+    $initialSelectedProducts = $purchase->incomingGoods->values()->map(function ($item) {
+        return [
+            'product_id' => (int) $item->product_id,
+            'product_label' => '['.($item->product?->product_code ?? '-').'] '.($item->product?->product_name ?? 'Produk tidak ditemukan'),
+            'stock' => (int) $item->stock,
+            'price' => (float) ($item->product?->purchase_price ?? 0),
+            'description' => $item->description ?? '',
+        ];
+    })->all();
+@endphp
+
 @section('scripts')
     <script src="{{ asset('assets/plugins/select2/js/select2.min.js') }}"></script>
     <script>
@@ -145,15 +157,7 @@
 
             $('.select2').select2({ width: '100%', matcher: productMatcher });
 
-            let selectedProducts = @json($purchase->incomingGoods->values()->map(function ($item) {
-                return [
-                    'product_id' => (int) $item->product_id,
-                    'product_label' => '['.($item->product?->product_code ?? '-').'] '.($item->product?->product_name ?? 'Produk tidak ditemukan'),
-                    'stock' => (int) $item->stock,
-                    'price' => (float) ($item->product?->purchase_price ?? 0),
-                    'description' => $item->description ?? '',
-                ];
-            })->all());
+            let selectedProducts = @json($initialSelectedProducts);
             let editingIndex = null;
 
             function escapeHtml(value) {
