@@ -14,6 +14,12 @@ class InventoryController extends Controller
 {
     private const MAX_STOCK_OPNAME_QUANTITY = 1000000;
 
+    /** Detik. Lock "processing" dianggap basi setelah ini agar request yang mati (timeout) tidak memblok selamanya. */
+    private const PROCESSING_LOCK_TTL = 300;
+
+    /** Jumlah baris maksimum per satu INSERT batch. */
+    private const INSERT_CHUNK_SIZE = 500;
+
     public function index(Request $request)
     {
         $user     = auth()->user();
@@ -151,6 +157,12 @@ class InventoryController extends Controller
     {
         $ver = 'adj-v15-nobuilder';
 
+        // Opname seluruh produk toko bisa memproses ribuan baris; beri waktu memadai
+        // agar tidak berhenti di tengah jalan (Internal Server Error) saat data banyak.
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(300);
+        }
+
         if ($request->boolean('use_session_items')) {
             $token = (string) $request->input('preview_token');
             $sessionToken = (string) $request->session()->get('inventory.stock_opname_preview.token');
@@ -161,14 +173,18 @@ class InventoryController extends Controller
                 }
                 return redirect()->back()->with('error', $message);
             }
-            if ($request->session()->get('inventory.stock_opname_preview.processing')) {
+            $processingAt = (int) $request->session()->get('inventory.stock_opname_preview.processing', 0);
+            // Lock self-expiring: jika request sebelumnya mati (timeout) tanpa membersihkan lock,
+            // jangan blok selamanya — anggap basi setelah PROCESSING_LOCK_TTL detik.
+            if ($processingAt > 0 && (now()->timestamp - $processingAt) < self::PROCESSING_LOCK_TTL) {
                 $message = "[$ver] Ringkasan sedang diproses. Silakan tunggu.";
                 if ($request->expectsJson()) {
                     return response()->json(['message' => $message], 422);
                 }
                 return redirect()->back()->with('error', $message);
             }
-            $request->session()->put('inventory.stock_opname_preview.processing', true);
+            $request->session()->put('inventory.stock_opname_preview.processing', now()->timestamp);
+            $request->session()->save();
         }
 
         try {
@@ -295,9 +311,14 @@ class InventoryController extends Controller
                 $prices = [];
                 foreach ($rowsPrice as $r) { $prices[(int)$r->id] = (int)$r->purchase_price; }
 
-                $purchaseId    = null;
+                // Kumpulkan seluruh perubahan lebih dulu, lalu tulis secara BATCH.
+                // Sebelumnya setiap item menjalankan 2-3 query di dalam loop, sehingga
+                // opname skala besar (mis. seluruh produk toko di-nol-kan) menghasilkan
+                // ribuan query dalam satu transaksi -> timeout -> Internal Server Error.
+                $minusItems    = []; // [product_id, qty_out]
+                $plusItems     = []; // [product_id, qty_in]
+                $opnameRows    = []; // [product_id, store_id, physical_quantity, created_at, updated_at]
                 $totalPurchase = 0;
-                $sellId        = null;
 
                 foreach ($items as $it) {
                     $pid  = (int)$it['product_id'];
@@ -306,83 +327,82 @@ class InventoryController extends Controller
 
                     $system = (int)($incoming[$pid] ?? 0) - (int)($outgoing[$pid] ?? 0);
                     $this->assertReasonableStockAdjustment($pid, $system, $phys);
-                    $minus  = max(0, $system - $phys);
-                    $price  = (int)($prices[$pid] ?? 0);
 
+                    $opnameRows[] = [$pid, $storeId, $phys, $now, $now];
+
+                    $minus = max(0, $system - $phys);
                     if ($minus > 0) {
-                        if ($sellId === null) {
-                            DB::insert(
-                                'INSERT INTO tb_sells (`no_invoice`,`store_id`,`date`,`total_price`,`payment_amount`,`created_at`,`updated_at`)
-                                 VALUES (?,?,?,?,?,?,?)',
-                                ['SO-ADJ-OUT-'.date('YmdHis'), $storeId, $now, 0, 0, $now, $now]
-                            );
-                            $sellId = (int)DB::getPdo()->lastInsertId();
-                        }
-                        $outColumns = ['product_id', 'sell_id', 'date', 'quantity_out', 'discount', 'recorded_by', 'description', 'is_pending_stock'];
-                        $outValues = [$pid, $sellId, $now, $minus, 0, 'Stock Opname', 'Stock Opname (-)', $isPending];
-                        if ($hasOutgoingStore) {
-                            $outColumns[] = 'store_id';
-                            $outValues[] = $storeId;
-                        }
-                        $outColumns = array_merge($outColumns, ['created_at', 'updated_at']);
-                        $outValues = array_merge($outValues, [$now, $now]);
-
-                        DB::insert(
-                            'INSERT INTO tb_outgoing_goods (`'.implode('`,`', $outColumns).'`) VALUES ('.implode(',', array_fill(0, count($outColumns), '?')).')',
-                            $outValues
-                        );
+                        $minusItems[] = [$pid, $minus];
                     }
-
-                    DB::statement(
-                        'INSERT INTO tb_stock_opnames
-                          (`product_id`,`store_id`,`physical_quantity`,`created_at`,`updated_at`)
-                          VALUES (?,?,?,?,?)
-                          ON DUPLICATE KEY UPDATE
-                          physical_quantity = VALUES(physical_quantity),
-                          updated_at = VALUES(updated_at)',
-                        [$pid, $storeId, $phys, $now, $now]
-                    );
 
                     $plus = max(0, $phys - $system);
                     if ($plus > 0) {
-                        if ($purchaseId === null) {
-                            DB::insert(
-                                'INSERT INTO tb_purchases (`supplier_id`,`store_id`,`total_price`,`created_by`,`created_at`,`updated_at`)
-                                 VALUES (?,?,?,?,?,?)',
-                                [$supplierId, $storeId, 0, $userId, $now, $now]
-                            );
-                            $purchaseId = (int)DB::getPdo()->lastInsertId();
-                        }
-
-                        $totalPurchase += $plus * $price;
-
-                        $inColumns = ['purchase_id', 'product_id', 'stock', 'description', 'is_pending_stock'];
-                        $inValues = [$purchaseId, $pid, $plus, 'Stock Opname (+)', $isPending];
-                        if ($hasIncomingStore) {
-                            $inColumns[] = 'store_id';
-                            $inValues[] = $storeId;
-                        }
-                        $inColumns = array_merge($inColumns, ['created_at', 'updated_at']);
-                        $inValues = array_merge($inValues, [$now, $now]);
-
-                        DB::insert(
-                            'INSERT INTO tb_incoming_goods (`'.implode('`,`', $inColumns).'`) VALUES ('.implode(',', array_fill(0, count($inColumns), '?')).')',
-                            $inValues
-                        );
+                        $totalPurchase += $plus * (int)($prices[$pid] ?? 0);
+                        $plusItems[] = [$pid, $plus];
                     }
                 }
 
-                if ($purchaseId !== null) {
+                // Upsert stok fisik (batch, chunked).
+                $this->batchUpsertStockOpname($opnameRows);
+
+                // Penyesuaian minus -> satu nota keluar, insert batch.
+                if (!empty($minusItems)) {
+                    DB::insert(
+                        'INSERT INTO tb_sells (`no_invoice`,`store_id`,`date`,`total_price`,`payment_amount`,`created_at`,`updated_at`)
+                         VALUES (?,?,?,?,?,?,?)',
+                        ['SO-ADJ-OUT-'.date('YmdHis'), $storeId, $now, 0, 0, $now, $now]
+                    );
+                    $sellId = (int)DB::getPdo()->lastInsertId();
+
+                    $outColumns = ['product_id', 'sell_id', 'date', 'quantity_out', 'discount', 'recorded_by', 'description', 'is_pending_stock'];
+                    if ($hasOutgoingStore) {
+                        $outColumns[] = 'store_id';
+                    }
+                    $outColumns = array_merge($outColumns, ['created_at', 'updated_at']);
+
+                    $outRows = [];
+                    foreach ($minusItems as [$pid, $minus]) {
+                        $row = [$pid, $sellId, $now, $minus, 0, 'Stock Opname', 'Stock Opname (-)', $isPending];
+                        if ($hasOutgoingStore) {
+                            $row[] = $storeId;
+                        }
+                        $row[] = $now;
+                        $row[] = $now;
+                        $outRows[] = $row;
+                    }
+                    $this->chunkInsert('tb_outgoing_goods', $outColumns, $outRows);
+                }
+
+                // Penyesuaian plus -> satu pembelian, insert batch.
+                if (!empty($plusItems)) {
+                    DB::insert(
+                        'INSERT INTO tb_purchases (`supplier_id`,`store_id`,`total_price`,`created_by`,`created_at`,`updated_at`)
+                         VALUES (?,?,?,?,?,?)',
+                        [$supplierId, $storeId, 0, $userId, $now, $now]
+                    );
+                    $purchaseId = (int)DB::getPdo()->lastInsertId();
+
+                    $inColumns = ['purchase_id', 'product_id', 'stock', 'description', 'is_pending_stock'];
+                    if ($hasIncomingStore) {
+                        $inColumns[] = 'store_id';
+                    }
+                    $inColumns = array_merge($inColumns, ['created_at', 'updated_at']);
+
+                    $inRows = [];
+                    foreach ($plusItems as [$pid, $plus]) {
+                        $row = [$purchaseId, $pid, $plus, 'Stock Opname (+)', $isPending];
+                        if ($hasIncomingStore) {
+                            $row[] = $storeId;
+                        }
+                        $row[] = $now;
+                        $row[] = $now;
+                        $inRows[] = $row;
+                    }
+                    $this->chunkInsert('tb_incoming_goods', $inColumns, $inRows);
+
                     DB::update(
                         'UPDATE tb_purchases SET total_price = ?, updated_at = ? WHERE id = ?',
                         [$totalPurchase, $now, $purchaseId]
-                    );
-                }
-
-                if ($sellId !== null) {
-                    DB::update(
-                        'UPDATE tb_sells SET total_price = ?, payment_amount = ?, updated_at = ? WHERE id = ?',
-                        [0, 0, $now, $sellId]
                     );
                 }
             });
@@ -399,6 +419,17 @@ class InventoryController extends Controller
             return redirect()
                 ->route('inventory.index', ['store_id' => $storeId])
                 ->with('success', $message);
+        } catch (\InvalidArgumentException $e) {
+            // Data tidak wajar / tidak valid: ini masalah validasi, bukan error server.
+            // Kembalikan 422 dengan pesan jelas, bukan 500 "Internal Server Error".
+            if ($request->boolean('use_session_items')) {
+                $request->session()->forget('inventory.stock_opname_preview.processing');
+            }
+            $message = "[$ver] ".$e->getMessage();
+            if ($request->expectsJson()) {
+                return response()->json(['message' => $message], 422);
+            }
+            return redirect()->back()->with('error', $message);
         } catch (\Throwable $e) {
             if ($request->boolean('use_session_items')) {
                 $request->session()->forget('inventory.stock_opname_preview.processing');
@@ -871,6 +902,58 @@ class InventoryController extends Controller
         if (abs($systemStock) > $max || $adjustment > $max) {
             throw new \InvalidArgumentException(
                 "Stok produk {$productId} tidak wajar. Sistem={$systemStock}, fisik={$physicalQuantity}. Periksa data mutasi sebelum stock opname."
+            );
+        }
+    }
+
+    /**
+     * INSERT banyak baris dalam beberapa query batch (chunked) untuk menghindari
+     * jumlah placeholder yang berlebihan dan ribuan round-trip ke database.
+     *
+     * @param string        $table
+     * @param array<string> $columns
+     * @param array<array>  $rows    Tiap baris berisi nilai berurutan sesuai $columns.
+     */
+    private function chunkInsert(string $table, array $columns, array $rows, int $chunkSize = self::INSERT_CHUNK_SIZE): void
+    {
+        if (empty($rows)) {
+            return;
+        }
+
+        $colSql = '`'.implode('`,`', $columns).'`';
+        $placeholderRow = '('.implode(',', array_fill(0, count($columns), '?')).')';
+
+        foreach (array_chunk($rows, $chunkSize) as $chunk) {
+            $placeholders = implode(',', array_fill(0, count($chunk), $placeholderRow));
+            $bindings = array_merge(...$chunk);
+            DB::insert("INSERT INTO {$table} ({$colSql}) VALUES {$placeholders}", $bindings);
+        }
+    }
+
+    /**
+     * Upsert stok fisik secara batch (chunked) dengan ON DUPLICATE KEY UPDATE.
+     *
+     * @param array<array{0:int,1:int,2:int,3:mixed,4:mixed}> $rows [product_id, store_id, physical_quantity, created_at, updated_at]
+     */
+    private function batchUpsertStockOpname(array $rows, int $chunkSize = self::INSERT_CHUNK_SIZE): void
+    {
+        if (empty($rows)) {
+            return;
+        }
+
+        $placeholderRow = '(?,?,?,?,?)';
+
+        foreach (array_chunk($rows, $chunkSize) as $chunk) {
+            $placeholders = implode(',', array_fill(0, count($chunk), $placeholderRow));
+            $bindings = array_merge(...$chunk);
+            DB::statement(
+                'INSERT INTO tb_stock_opnames
+                  (`product_id`,`store_id`,`physical_quantity`,`created_at`,`updated_at`)
+                  VALUES '.$placeholders.'
+                  ON DUPLICATE KEY UPDATE
+                  physical_quantity = VALUES(physical_quantity),
+                  updated_at = VALUES(updated_at)',
+                $bindings
             );
         }
     }
