@@ -82,7 +82,8 @@
     </div>
     @endif
 
-    <form id="stock-form" action="{{ route('inventory.adjustStockPreview') }}" method="POST">
+    <form id="stock-form" action="{{ route('inventory.adjustStockPreview') }}" method="POST"
+          onsubmit="return stockFormReady();">
         @csrf
         @if($storeId)
             <input type="hidden" name="store_id" value="{{ $storeId }}">
@@ -178,6 +179,19 @@
 @endsection
 
 @section('scripts')
+<script>
+// Guard: cegah form ter-submit secara NATIVE (form-encoded) sebelum JavaScript siap.
+// Submit native mengirim 3xN field (product_id[]/store_id[]/physical_quantity[]) sehingga
+// menembus batas max_input_vars PHP -> array terpotong -> "Payload tidak valid".
+// Selama belum siap, submit (klik tombol maupun tekan Enter) diblokir. Setelah siap,
+// handler fetch di bawah yang mengirim JSON (kebal max_input_vars).
+window.__stockFormReady = false;
+function stockFormReady() {
+    if (window.__stockFormReady) return true;
+    alert('Halaman masih menyiapkan data. Mohon tunggu beberapa detik, lalu tekan Simpan lagi.');
+    return false;
+}
+</script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
     const table = document.getElementById('stock-table');
@@ -461,6 +475,9 @@ document.addEventListener('DOMContentLoaded', () => {
         filterRows(searchInput.value);
         searchInput.focus();
     }
+
+    // Semua handler sudah ter-bind: mulai sekarang submit lewat fetch/JSON (kebal max_input_vars).
+    window.__stockFormReady = true;
 });
 </script>
 @endsection

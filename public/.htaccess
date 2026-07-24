@@ -19,3 +19,15 @@
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteRule ^ index.php [L]
 </IfModule>
+
+# Naikkan batas variabel input untuk mod_php (Apache) agar submit form besar tidak dipotong.
+# (Untuk PHP-FPM/CGI dibaca dari public/.user.ini)
+<IfModule mod_php.c>
+    php_value max_input_vars 50000
+</IfModule>
+<IfModule mod_php7.c>
+    php_value max_input_vars 50000
+</IfModule>
+<IfModule mod_php8.c>
+    php_value max_input_vars 50000
+</IfModule>
