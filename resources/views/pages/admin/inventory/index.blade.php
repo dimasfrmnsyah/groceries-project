@@ -139,7 +139,8 @@
                             @endphp
                             <input type="number" name="physical_quantity[]"
                                    value="{{ $physicalValue }}"
-                                   min="0" class="form-control physical-qty" required>
+                                   min="0" max="1000000" step="1" inputmode="numeric"
+                                   class="form-control physical-qty" required>
                         </td>
 
                         <td class="text-end diff-qty">0</td>
@@ -344,16 +345,30 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // KIRIM JSON ke endpoint preview (hanya item berubah)
+        const MAX_QTY = 1000000;
         const items = [];
+        let invalidRow = null;
         table.querySelectorAll('tbody tr').forEach(tr => {
             const productId = parseInt(tr.querySelector('input[name="product_id[]"]').value);
             const storeId   = parseInt(tr.querySelector('input[name="store_id[]"]').value);
             const systemStock = parseInt(tr.querySelector('.system-stock').textContent.replace(/[^\d-]/g, '')) || 0;
             const physical  = parseInt(tr.querySelector('.physical-qty').value) || 0;
+            if (!invalidRow && (physical < 0 || physical > MAX_QTY)) {
+                invalidRow = tr;
+            }
             if (physical !== systemStock) {
                 items.push({ product_id: productId, store_id: storeId, physical_quantity: physical });
             }
         });
+
+        if (invalidRow) {
+            setSubmitting(false);
+            const name = (invalidRow.querySelector('.product-name')?.textContent || '').trim();
+            invalidRow.classList.add('table-danger');
+            invalidRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            alert('Jumlah fisik tidak valid (harus 0 sampai ' + MAX_QTY.toLocaleString('id-ID') + ').\nPeriksa produk: ' + name);
+            return;
+        }
 
         const storeIdField = form.querySelector('input[name="store_id"]');
         const totalItemsField = form.querySelector('input[name="total_items"]');

@@ -103,11 +103,19 @@
                                     <th>Produk</th>
                                     <th>Stock</th>
                                     <th>Harga</th>
+                                    <th>Total</th>
                                     <th>Deskripsi</th>
                                     <th style="min-width: 160px;">Aksi</th>
                                 </tr>
                             </thead>
                             <tbody id="product-list"></tbody>
+                            <tfoot class="table-light">
+                                <tr>
+                                    <th colspan="4" class="text-end">Total</th>
+                                    <th class="text-end" id="product-grand-total">0</th>
+                                    <th colspan="2"></th>
+                                </tr>
+                            </tfoot>
                         </table>
                     </div>
                 </div>
@@ -117,6 +125,18 @@
         </div>
     </div>
 @endsection
+
+@php
+    $initialSelectedProducts = $purchase->incomingGoods->values()->map(function ($item) {
+        return [
+            'product_id' => (int) $item->product_id,
+            'product_label' => '['.($item->product?->product_code ?? '-').'] '.($item->product?->product_name ?? 'Produk tidak ditemukan'),
+            'stock' => (int) $item->stock,
+            'price' => (float) ($item->product?->purchase_price ?? 0),
+            'description' => $item->description ?? '',
+        ];
+    })->all();
+@endphp
 
 @section('scripts')
     <script src="{{ asset('assets/plugins/select2/js/select2.min.js') }}"></script>
@@ -137,19 +157,19 @@
 
             $('.select2').select2({ width: '100%', matcher: productMatcher });
 
-            let selectedProducts = @json($purchase->incomingGoods->values()->map(function ($item) {
-                return [
-                    'product_id' => (int) $item->product_id,
-                    'product_label' => '['.($item->product?->product_code ?? '-').'] '.($item->product?->product_name ?? 'Produk tidak ditemukan'),
-                    'stock' => (int) $item->stock,
-                    'price' => (float) ($item->product?->purchase_price ?? 0),
-                    'description' => $item->description ?? '',
-                ];
-            })->all());
+            let selectedProducts = @json($initialSelectedProducts);
             let editingIndex = null;
 
             function escapeHtml(value) {
                 return $('<div>').text(value ?? '').html();
+            }
+
+            function formatNumber(value) {
+                return (Number(value) || 0).toLocaleString('id-ID');
+            }
+
+            function itemTotal(item) {
+                return (Number(item.price) || 0) * (Number(item.stock) || 0);
             }
 
             function resetProductInput(focusAfterReset = true) {
@@ -226,6 +246,7 @@
 
                 $('#product-list-section').show();
                 selectedProducts.forEach((item, index) => {
+                    const rowTotal = itemTotal(item);
                     $list.append(`
                         <tr>
                             <td>${index + 1}</td>
@@ -237,7 +258,8 @@
                                 ${item.stock}
                                 <input type="hidden" name="products[${index}][stock]" value="${item.stock}">
                             </td>
-                            <td>${item.price}</td>
+                            <td class="text-end">${formatNumber(item.price)}</td>
+                            <td class="text-end">${formatNumber(rowTotal)}</td>
                             <td>
                                 ${escapeHtml(item.description)}
                                 <input type="hidden" name="products[${index}][description]" value="${escapeHtml(item.description)}">
@@ -254,8 +276,9 @@
             }
 
             function updateTotalPrice() {
-                const totalPrice = selectedProducts.reduce((total, item) => total + (item.price * item.stock), 0);
+                const totalPrice = selectedProducts.reduce((total, item) => total + itemTotal(item), 0);
                 $('#total_price').val(totalPrice);
+                $('#product-grand-total').text(formatNumber(totalPrice));
             }
 
             $('#product-input').on('change', function () {
