@@ -450,39 +450,55 @@ class InventoryController extends Controller
     public function adjustStockPreview(Request $request)
     {
         $ver = 'adj-v15-nobuilder';
+
         try {
             $items = $this->parseStockItems($request, true);
+
+            $storeId = 0;
+            if (!empty($items)) {
+                $storeIds = array_values(array_unique(array_filter(array_column($items, 'store_id'))));
+                if (count($storeIds) !== 1) {
+                    return response()->json(['message' => "[$ver] Multiple/invalid store_id"], 422);
+                }
+                $storeId = (int)$storeIds[0];
+            } else {
+                $storeId = (int)$request->input('store_id', 0);
+                if ($storeId <= 0) {
+                    return response()->json(['message' => "[$ver] store_id tidak ditemukan"], 422);
+                }
+            }
+
+            $totalItems = (int)$request->input('total_items', 0);
+            $summary = $this->buildStockSummary($items, $storeId, $totalItems > 0 ? $totalItems : null);
+            $token = bin2hex(random_bytes(16));
+            $request->session()->put('inventory.stock_opname_preview', [
+                'items' => $items,
+                'summary' => $summary,
+                'store_id' => $storeId,
+                'token' => $token,
+            ]);
+
+            return response()->json([
+                'redirect_url' => route('inventory.adjustStockPreviewPage'),
+            ]);
         } catch (\InvalidArgumentException $e) {
+            // Data tidak wajar / tidak valid — mis. stok SISTEM sebuah produk kelewat besar
+            // akibat data mutasi rusak. Kembalikan 422 dengan pesan jelas (menyebut produknya),
+            // bukan 500 "Internal Server Error" tanpa keterangan.
             return response()->json(['message' => "[$ver] ".$e->getMessage()], 422);
+        } catch (\Throwable $e) {
+            Log::error('adjustStockPreview error', [
+                'ver'      => $ver,
+                'err'      => $e->getMessage(),
+                'file'     => $e->getFile(),
+                'line'     => $e->getLine(),
+                'store_id' => $request->input('store_id'),
+            ]);
+            // Tetap tampilkan penyebab ke pengguna walau APP_DEBUG=false, agar bisa ditindaklanjuti.
+            return response()->json([
+                'message' => "[$ver] Gagal menyiapkan ringkasan: ".$e->getMessage()." @ ".basename($e->getFile()).":".$e->getLine(),
+            ], 500);
         }
-
-        $storeId = 0;
-        if (!empty($items)) {
-            $storeIds = array_values(array_unique(array_filter(array_column($items, 'store_id'))));
-            if (count($storeIds) !== 1) {
-                return response()->json(['message' => "[$ver] Multiple/invalid store_id"], 422);
-            }
-            $storeId = (int)$storeIds[0];
-        } else {
-            $storeId = (int)$request->input('store_id', 0);
-            if ($storeId <= 0) {
-                return response()->json(['message' => "[$ver] store_id tidak ditemukan"], 422);
-            }
-        }
-
-        $totalItems = (int)$request->input('total_items', 0);
-        $summary = $this->buildStockSummary($items, $storeId, $totalItems > 0 ? $totalItems : null);
-        $token = bin2hex(random_bytes(16));
-        $request->session()->put('inventory.stock_opname_preview', [
-            'items' => $items,
-            'summary' => $summary,
-            'store_id' => $storeId,
-            'token' => $token,
-        ]);
-
-        return response()->json([
-            'redirect_url' => route('inventory.adjustStockPreviewPage'),
-        ]);
     }
 
     public function adjustStockPreviewPage(Request $request)
