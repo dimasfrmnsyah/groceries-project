@@ -1,7 +1,9 @@
 @extends('layouts.app')
 
 @section('content')
-@php($isEdit = $mode === 'edit')
+@php
+    $isEdit = $mode === 'edit';
+@endphp
 <div class="page-breadcrumb d-none d-sm-flex align-items-center mb-3">
     <div class="breadcrumb-title pe-3">Account Bank / Kas</div>
     <div class="ps-3">
@@ -20,12 +22,13 @@
 @if($errors->any()) <div class="alert alert-danger">Form masih error. Cek input yang ditandai.</div> @endif
 
 <div class="row">
-    <div class="col-xl-8 mx-auto">
+    <div class="{{ $isEdit ? 'col-xl-8' : 'col-12' }} mx-auto">
         <div class="card">
             <div class="card-body">
                 <form method="POST" action="{{ $isEdit ? route('accounting.accounts.update', $account->id) : route('accounting.accounts.store') }}">
                     @csrf
                     @if($isEdit) @method('PUT') @endif
+                    @if($isEdit)
                     <div class="row">
                         <div class="col-md-6 mb-3">
                             <label class="form-label">Nomor Account</label>
@@ -56,6 +59,16 @@
                             <button class="btn btn-primary">{{ $isEdit ? 'Update' : 'Simpan' }}</button>
                         </div>
                     </div>
+                    @else
+                        @php
+                            $bulkFields = [
+                                ['name' => 'account_number', 'label' => 'Nomor Account', 'type' => 'text', 'maxLength' => 50, 'required' => true, 'width' => '190px'],
+                                ['name' => 'account_name', 'label' => 'Nama Account', 'type' => 'text', 'maxLength' => 150, 'required' => true, 'width' => '260px'],
+                                ['name' => 'account_type', 'label' => 'Tipe', 'type' => 'text', 'default' => 'kas', 'maxLength' => 50, 'required' => true, 'carry' => true, 'width' => '180px'],
+                            ];
+                        @endphp
+                        @include('pages.admin.accounting.partials.bulk-entry-fields', ['bulkKey' => 'account', 'bulkTitle' => 'Daftar Account Bank / Kas'])
+                    @endif
                 </form>
             </div>
         </div>

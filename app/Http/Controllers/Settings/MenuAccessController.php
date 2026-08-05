@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Settings;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class MenuAccessController extends Controller
@@ -86,6 +87,7 @@ class MenuAccessController extends Controller
                     DB::table('tb_master_menu_roles')->insert($rows);
                 }
             });
+            Cache::forget('menu_allowed_routes:'.$role);
 
             return redirect()
                 ->route('settings.access.index', ['role' => $role])
@@ -112,6 +114,7 @@ class MenuAccessController extends Controller
                 DB::table('tb_master_menu_roles')->insert($rows);
             }
         });
+        Cache::forget('menu_allowed_routes:'.$role);
 
         return redirect()
             ->route('settings.access.index', ['role' => $role])

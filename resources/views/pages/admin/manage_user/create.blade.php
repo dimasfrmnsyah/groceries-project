@@ -65,16 +65,24 @@
         <div class="text-danger">{{ $message }}</div>
       @enderror
         </div>
-      @endif
+        @endif
         <div class="col-6 mb-3">
-          <label for="roles">Role</label>
+          <div class="d-flex align-items-center justify-content-between gap-2">
+            <label for="role-select" class="mb-0">Role</label>
+            @if(strtolower((string) auth()->user()->roles) === 'superadmin')
+              <a href="{{ route('settings.roles.create') }}" class="small text-primary">
+                <i class="bx bx-plus-circle me-1"></i>Tambah role baru
+              </a>
+            @endif
+          </div>
           <select class="form-select" name="roles" id="role-select">
-          <option value="">Pilih Role</option>
-          @if(strtolower((string) auth()->user()->roles) === 'superadmin')
-        <option value="superadmin" {{ (isset($user) && strtolower((string) $user->roles) == 'superadmin') || old('roles') == 'superadmin' ? 'selected' : '' }}>Superadmin</option>
-      @endif
-          <option value="admin" {{ (isset($user) && strtolower((string) $user->roles) == 'admin') || old('roles') == 'admin' ? 'selected' : '' }}>Admin</option>
-          <option value="staff" {{ (isset($user) && strtolower((string) $user->roles) == 'staff') || old('roles') == 'staff' ? 'selected' : '' }}>Staff</option>
+            <option value="">Pilih Role</option>
+            @php
+              $selectedRole = strtolower((string) old('roles', $user->roles ?? ''));
+            @endphp
+            @foreach($availableRoles as $availableRole)
+              <option value="{{ $availableRole }}" @selected($selectedRole === $availableRole)>{{ ucwords(str_replace(['-', '_'], ' ', $availableRole)) }}</option>
+            @endforeach
           </select>
 
 
@@ -85,16 +93,16 @@
         <div class="col-6 mb-3">
           <label for="name">Store</label>
           @php
-            $selectedStoreIds = collect(old('store_ids', $selectedStoreIds ?? []))
+            $selectedStoreIdCollection = collect(old('store_ids', $selectedStoreIds ?? []))
                 ->filter()
                 ->map(fn ($id) => (int) $id);
-            if ($selectedStoreIds->isEmpty() && old('store_id')) {
-                $selectedStoreIds = collect([(int) old('store_id')]);
+            if ($selectedStoreIdCollection->isEmpty() && old('store_id')) {
+                $selectedStoreIdCollection = collect([(int) old('store_id')]);
             }
-            if ($selectedStoreIds->isEmpty() && isset($user) && $user->store_id) {
-                $selectedStoreIds = collect([(int) $user->store_id]);
+            if ($selectedStoreIdCollection->isEmpty() && isset($user) && $user->store_id) {
+                $selectedStoreIdCollection = collect([(int) $user->store_id]);
             }
-            $selectedStoreIdSingle = $selectedStoreIds->first();
+            $selectedStoreIdSingle = $selectedStoreIdCollection->first();
           @endphp
           <div id="store-multi-wrap" class="border rounded p-2" style="max-height: 220px; overflow: auto;">
             @foreach ($stores as $store)
@@ -104,7 +112,7 @@
                        name="store_ids[]"
                        id="store-check-{{ $store->id }}"
                        value="{{ $store->id }}"
-                       {{ $selectedStoreIds->contains((int) $store->id) ? 'checked' : '' }}>
+                       {{ $selectedStoreIdCollection->contains((int) $store->id) ? 'checked' : '' }}>
                 <label class="form-check-label" for="store-check-{{ $store->id }}">
                   {{ $store->store_name }}
                 </label>

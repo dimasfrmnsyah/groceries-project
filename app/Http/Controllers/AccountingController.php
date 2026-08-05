@@ -32,14 +32,19 @@ class AccountingController extends Controller
     public function storeAccount(Request $request)
     {
         $data = $request->validate([
-            'account_number' => 'required|string|max:50|unique:tb_accounting_accounts,account_number',
-            'account_name' => 'required|string|max:150',
-            'account_type' => 'required|string|max:50',
+            'entries' => 'required|array|min:1|max:100',
+            'entries.*.account_number' => 'required|string|max:50|distinct|unique:tb_accounting_accounts,account_number',
+            'entries.*.account_name' => 'required|string|max:150',
+            'entries.*.account_type' => 'required|string|max:50',
         ]);
 
-        DB::table('tb_accounting_accounts')->insert($this->withTimestamps($data));
+        DB::transaction(function () use ($data) {
+            $rows = array_map(fn (array $entry) => $this->withTimestamps($entry), $data['entries']);
+            DB::table('tb_accounting_accounts')->insert($rows);
+        });
 
-        return redirect()->route('accounting.accounts.index')->with('success', 'Account berhasil ditambahkan.');
+        return redirect()->route('accounting.accounts.index')
+            ->with('success', count($data['entries']).' account berhasil ditambahkan.');
     }
 
     public function editAccount(int $id)
@@ -154,14 +159,17 @@ class AccountingController extends Controller
 
     public function storeBudgeting(Request $request)
     {
-        $data = $this->validateMoneyData($request);
+        $entries = $this->validateMoneyEntries($request);
 
-        DB::transaction(function () use ($data) {
-            $id = DB::table('tb_budgets')->insertGetId($this->withAudit($data));
-            $this->syncLedger($data['date'], (int) $data['store_id'], $data['account_id'] ?? null, 'budgeting', $id, 'in', $data['amount'], $data['description'] ?? 'Budgeting');
+        DB::transaction(function () use ($entries) {
+            foreach ($entries as $entry) {
+                $id = DB::table('tb_budgets')->insertGetId($this->withAudit($entry));
+                $this->syncLedger($entry['date'], (int) $entry['store_id'], $entry['account_id'] ?? null, 'budgeting', $id, 'in', $entry['amount'], $entry['description'] ?? 'Budgeting');
+            }
         });
 
-        return redirect()->route('accounting.budgeting.index', ['store' => $data['store_id']])->with('success', 'Budgeting masuk ke buku kas.');
+        return redirect()->route('accounting.budgeting.index', $this->bulkStoreFilter($entries))
+            ->with('success', count($entries).' budgeting berhasil disimpan dan masuk ke buku kas.');
     }
 
     public function editBudgeting(int $id)
@@ -226,14 +234,17 @@ class AccountingController extends Controller
 
     public function storeExpense(Request $request)
     {
-        $data = $this->validateMoneyData($request);
+        $entries = $this->validateMoneyEntries($request);
 
-        DB::transaction(function () use ($data) {
-            $id = DB::table('tb_expenses')->insertGetId($this->withAudit($data));
-            $this->syncLedger($data['date'], (int) $data['store_id'], $data['account_id'] ?? null, 'expense', $id, 'out', $data['amount'], $data['description'] ?? 'Pengeluaran');
+        DB::transaction(function () use ($entries) {
+            foreach ($entries as $entry) {
+                $id = DB::table('tb_expenses')->insertGetId($this->withAudit($entry));
+                $this->syncLedger($entry['date'], (int) $entry['store_id'], $entry['account_id'] ?? null, 'expense', $id, 'out', $entry['amount'], $entry['description'] ?? 'Pengeluaran');
+            }
         });
 
-        return redirect()->route('accounting.expenses.index', ['store' => $data['store_id']])->with('success', 'Pengeluaran berhasil disimpan.');
+        return redirect()->route('accounting.expenses.index', $this->bulkStoreFilter($entries))
+            ->with('success', count($entries).' pengeluaran berhasil disimpan.');
     }
 
     public function editExpense(int $id)
@@ -300,41 +311,55 @@ class AccountingController extends Controller
 
     public function storeReceivable(Request $request)
     {
-        $data = $this->validateReceivableData($request);
+        $entries = $this->validateReceivableEntries($request);
 
-        $stock = $this->currentStock((int) $data['store_id'], (int) $data['product_id']);
-        if ($stock < (int) $data['quantity']) {
-            return back()->withInput()->with('error', 'Stok tidak cukup. Stok tersedia: '.$stock);
+        $requestedStock = [];
+        foreach ($entries as $index => $entry) {
+            $key = $entry['store_id'].':'.$entry['product_id'];
+            $requestedStock[$key]['quantity'] = ($requestedStock[$key]['quantity'] ?? 0) + (int) $entry['quantity'];
+            $requestedStock[$key]['store_id'] = (int) $entry['store_id'];
+            $requestedStock[$key]['product_id'] = (int) $entry['product_id'];
+            $requestedStock[$key]['indexes'][] = $index;
+        }
+        foreach ($requestedStock as $requestGroup) {
+            $stock = $this->currentStock($requestGroup['store_id'], $requestGroup['product_id']);
+            if ($stock < $requestGroup['quantity']) {
+                return back()->withInput()->withErrors([
+                    'entries.'.$requestGroup['indexes'][0].'.quantity' => 'Total qty untuk produk ini melebihi stok. Tersedia: '.$stock.', diminta: '.$requestGroup['quantity'].'.',
+                ]);
+            }
         }
 
-        DB::transaction(function () use ($data) {
-            $sell = tb_sell::create([
-                'no_invoice' => 'AR-'.now('Asia/Jakarta')->format('YmdHis'),
-                'store_id' => $data['store_id'],
-                'date' => $data['date'],
-                'total_price' => 0,
-                'payment_amount' => 0,
-                'customer_id' => $data['customer_id'] ?? 0,
-            ]);
+        DB::transaction(function () use ($entries) {
+            foreach ($entries as $index => $entry) {
+                $sell = tb_sell::create([
+                    'no_invoice' => 'AR-'.now('Asia/Jakarta')->format('YmdHis').'-'.str_pad((string) ($index + 1), 3, '0', STR_PAD_LEFT),
+                    'store_id' => $entry['store_id'],
+                    'date' => $entry['date'],
+                    'total_price' => 0,
+                    'payment_amount' => 0,
+                    'customer_id' => $entry['customer_id'] ?? 0,
+                ]);
 
-            $payload = $this->receivableOutgoingPayload($data, $sell->id);
-            tb_outgoing_goods::create($payload);
+                tb_outgoing_goods::create($this->receivableOutgoingPayload($entry, $sell->id));
 
-            DB::table('tb_customer_receivables')->insert($this->withAudit([
-                'date' => $data['date'],
-                'store_id' => $data['store_id'],
-                'customer_id' => $data['customer_id'] ?? null,
-                'product_id' => $data['product_id'],
-                'quantity' => $data['quantity'],
-                'amount' => $data['amount'],
-                'paid_amount' => 0,
-                'status' => 'open',
-                'sell_id' => $sell->id,
-                'description' => $data['description'] ?? null,
-            ]));
+                DB::table('tb_customer_receivables')->insert($this->withAudit([
+                    'date' => $entry['date'],
+                    'store_id' => $entry['store_id'],
+                    'customer_id' => $entry['customer_id'] ?? null,
+                    'product_id' => $entry['product_id'],
+                    'quantity' => $entry['quantity'],
+                    'amount' => $entry['amount'],
+                    'paid_amount' => 0,
+                    'status' => 'open',
+                    'sell_id' => $sell->id,
+                    'description' => $entry['description'] ?? null,
+                ]));
+            }
         });
 
-        return redirect()->route('accounting.receivables.index', ['store' => $data['store_id']])->with('success', 'Piutang disimpan dan stok sudah berkurang.');
+        return redirect()->route('accounting.receivables.index', $this->bulkStoreFilter($entries))
+            ->with('success', count($entries).' piutang disimpan dan stok sudah berkurang.');
     }
 
     public function editReceivable(int $id)
@@ -480,10 +505,15 @@ class AccountingController extends Controller
 
     public function storeSupplierDebt(Request $request)
     {
-        $data = $this->validateSupplierDebtData($request);
-        DB::table('tb_supplier_debts')->insert($this->withAudit($this->supplierDebtPayload($data)));
+        $entries = $this->validateSupplierDebtEntries($request);
+        DB::transaction(function () use ($entries) {
+            foreach ($entries as $entry) {
+                DB::table('tb_supplier_debts')->insert($this->withAudit($this->supplierDebtPayload($entry)));
+            }
+        });
 
-        return redirect()->route('accounting.supplier-debts.index', ['store' => $data['store_id']])->with('success', 'Hutang supplier berhasil disimpan.');
+        return redirect()->route('accounting.supplier-debts.index', $this->bulkStoreFilter($entries))
+            ->with('success', count($entries).' hutang supplier berhasil disimpan.');
     }
 
     public function editSupplierDebt(int $id)
@@ -592,10 +622,18 @@ class AccountingController extends Controller
 
     public function storeCashOpname(Request $request)
     {
-        $data = $this->validateCashOpnameData($request);
-        DB::table('tb_cash_opnames')->insert($this->withAudit($data));
+        $entries = $this->validateCashOpnameEntries($request);
 
-        return redirect()->route('accounting.cash-opname.index', ['store' => $data['store_id']])->with('success', 'Cash opname berhasil disimpan.');
+        DB::transaction(function () use ($entries) {
+            $rows = array_map(fn (array $entry) => $this->withAudit($entry), $entries);
+            DB::table('tb_cash_opnames')->insert($rows);
+        });
+
+        $storeIds = array_values(array_unique(array_column($entries, 'store_id')));
+        $routeParameters = count($storeIds) === 1 ? ['store' => $storeIds[0]] : [];
+
+        return redirect()->route('accounting.cash-opname.index', $routeParameters)
+            ->with('success', count($entries).' cash opname berhasil disimpan.');
     }
 
     public function editCashOpname(int $id)
@@ -653,6 +691,23 @@ class AccountingController extends Controller
         return $data;
     }
 
+    private function validateMoneyEntries(Request $request): array
+    {
+        $data = $request->validate([
+            'store_id' => 'required|integer|exists:tb_stores,id',
+            'entries' => 'required|array|min:1|max:100',
+            'entries.*.date' => 'required|date',
+            'entries.*.account_id' => 'nullable|integer|exists:tb_accounting_accounts,id',
+            'entries.*.category' => 'nullable|string|max:120',
+            'entries.*.amount' => 'required|numeric|min:0',
+            'entries.*.description' => 'nullable|string|max:255',
+        ]);
+
+        $this->requireStoreAccess((int) $data['store_id']);
+
+        return array_map(fn (array $entry) => array_merge($entry, ['store_id' => (int) $data['store_id']]), $data['entries']);
+    }
+
     private function validateReceivableData(Request $request): array
     {
         $data = $request->validate([
@@ -667,6 +722,24 @@ class AccountingController extends Controller
         $this->requireStoreAccess((int) $data['store_id']);
 
         return $data;
+    }
+
+    private function validateReceivableEntries(Request $request): array
+    {
+        $data = $request->validate([
+            'store_id' => 'required|integer|exists:tb_stores,id',
+            'entries' => 'required|array|min:1|max:100',
+            'entries.*.date' => 'required|date',
+            'entries.*.customer_id' => 'nullable|integer|exists:tb_customers,id',
+            'entries.*.product_id' => 'required|integer|exists:tb_products,id',
+            'entries.*.quantity' => 'required|integer|min:1',
+            'entries.*.amount' => 'required|numeric|min:0',
+            'entries.*.description' => 'nullable|string|max:255',
+        ]);
+
+        $this->requireStoreAccess((int) $data['store_id']);
+
+        return array_map(fn (array $entry) => array_merge($entry, ['store_id' => (int) $data['store_id']]), $data['entries']);
     }
 
     private function validateSupplierDebtData(Request $request): array
@@ -684,6 +757,23 @@ class AccountingController extends Controller
         return $data;
     }
 
+    private function validateSupplierDebtEntries(Request $request): array
+    {
+        $data = $request->validate([
+            'store_id' => 'required|integer|exists:tb_stores,id',
+            'entries' => 'required|array|min:1|max:100',
+            'entries.*.date' => 'required|date',
+            'entries.*.supplier_id' => 'nullable|integer|exists:tb_suppliers,id',
+            'entries.*.budget_amount' => 'required|numeric|min:0',
+            'entries.*.purchase_amount' => 'required|numeric|min:0',
+            'entries.*.description' => 'nullable|string|max:255',
+        ]);
+
+        $this->requireStoreAccess((int) $data['store_id']);
+
+        return array_map(fn (array $entry) => array_merge($entry, ['store_id' => (int) $data['store_id']]), $data['entries']);
+    }
+
     private function validateCashOpnameData(Request $request): array
     {
         $data = $request->validate([
@@ -695,6 +785,21 @@ class AccountingController extends Controller
         $this->requireStoreAccess((int) $data['store_id']);
 
         return $data;
+    }
+
+    private function validateCashOpnameEntries(Request $request): array
+    {
+        $data = $request->validate([
+            'store_id' => 'required|integer|exists:tb_stores,id',
+            'entries' => 'required|array|min:1|max:100',
+            'entries.*.date' => 'required|date',
+            'entries.*.nominal' => 'required|numeric|min:0',
+            'entries.*.description' => 'nullable|string|max:255',
+        ]);
+
+        $this->requireStoreAccess((int) $data['store_id']);
+
+        return array_map(fn (array $entry) => array_merge($entry, ['store_id' => (int) $data['store_id']]), $data['entries']);
     }
 
     private function supplierDebtPayload(array $data, float $paidAmount = 0): array
@@ -829,6 +934,12 @@ class AccountingController extends Controller
         $data['created_at'] = now();
         $data['updated_at'] = now();
         return $data;
+    }
+
+    private function bulkStoreFilter(array $entries): array
+    {
+        $storeIds = array_values(array_unique(array_map('intval', array_column($entries, 'store_id'))));
+        return count($storeIds) === 1 ? ['store' => $storeIds[0]] : [];
     }
 
     private function withUpdateTimestamp(array $data): array

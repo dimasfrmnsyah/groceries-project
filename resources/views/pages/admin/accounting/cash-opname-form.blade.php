@@ -1,7 +1,9 @@
 @extends('layouts.app')
 
 @section('content')
-@php($isEdit = $mode === 'edit')
+@php
+    $isEdit = $mode === 'edit';
+@endphp
 <div class="page-breadcrumb d-none d-sm-flex align-items-center mb-3">
     <div class="breadcrumb-title pe-3">Cash Opname</div>
     <div class="ps-3">
@@ -23,12 +25,13 @@
 @if($errors->any()) <div class="alert alert-danger">Form masih error. Cek input yang ditandai.</div> @endif
 
 <div class="row">
-    <div class="col-xl-8 mx-auto">
+    <div class="{{ $isEdit ? 'col-xl-8' : 'col-12' }} mx-auto">
         <div class="card">
             <div class="card-body">
                 <form method="POST" action="{{ $isEdit ? route('accounting.cash-opname.update', $row->id) : route('accounting.cash-opname.store') }}">
                     @csrf
                     @if($isEdit) @method('PUT') @endif
+                    @if($isEdit)
                     <div class="row">
                         <div class="col-md-6 mb-3">
                             <label class="form-label">Tanggal</label>
@@ -59,6 +62,16 @@
                             <button class="btn btn-primary">{{ $isEdit ? 'Update' : 'Simpan' }}</button>
                         </div>
                     </div>
+                    @else
+                        @php
+                            $bulkFields = [
+                                ['name' => 'date', 'label' => 'Tanggal', 'type' => 'date', 'default' => now('Asia/Jakarta')->toDateString(), 'required' => true, 'carry' => true, 'width' => '155px'],
+                                ['name' => 'nominal', 'label' => 'Nominal Uang', 'type' => 'number', 'min' => 0, 'step' => '0.01', 'required' => true, 'align' => 'end', 'width' => '180px'],
+                                ['name' => 'description', 'label' => 'Keterangan', 'type' => 'text', 'maxLength' => 255, 'placeholder' => 'Opsional', 'width' => '280px'],
+                            ];
+                        @endphp
+                        @include('pages.admin.accounting.partials.bulk-entry-fields', ['bulkKey' => 'cash-opname', 'bulkTitle' => 'Daftar Cash Opname', 'bulkUsesStore' => true])
+                    @endif
                 </form>
             </div>
         </div>

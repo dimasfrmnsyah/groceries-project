@@ -1,7 +1,9 @@
 @extends('layouts.app')
 
 @section('content')
-@php($isEdit = $mode === 'edit')
+@php
+    $isEdit = $mode === 'edit';
+@endphp
 <div class="page-breadcrumb d-none d-sm-flex align-items-center mb-3">
     <div class="breadcrumb-title pe-3">Hutang Supplier</div>
     <div class="ps-3">
@@ -23,12 +25,13 @@
 @if($errors->any()) <div class="alert alert-danger">Form masih error. Cek input yang ditandai.</div> @endif
 
 <div class="row">
-    <div class="col-xl-9 mx-auto">
+    <div class="{{ $isEdit ? 'col-xl-9' : 'col-12' }} mx-auto">
         <div class="card">
             <div class="card-body">
                 <form method="POST" action="{{ $isEdit ? route('accounting.supplier-debts.update', $row->id) : route('accounting.supplier-debts.store') }}">
                     @csrf
                     @if($isEdit) @method('PUT') @endif
+                    @if($isEdit)
                     <div class="row">
                         <div class="col-md-6 mb-3">
                             <label class="form-label">Tanggal</label>
@@ -74,6 +77,18 @@
                             <button class="btn btn-primary">{{ $isEdit ? 'Update' : 'Simpan' }}</button>
                         </div>
                     </div>
+                    @else
+                        @php
+                            $bulkFields = [
+                                ['name' => 'date', 'label' => 'Tanggal', 'type' => 'date', 'default' => now('Asia/Jakarta')->toDateString(), 'required' => true, 'carry' => true, 'width' => '155px'],
+                                ['name' => 'supplier_id', 'label' => 'Supplier', 'type' => 'select', 'placeholder' => 'Pilih Supplier', 'carry' => true, 'width' => '220px', 'options' => $suppliers->map(fn ($item) => ['value' => $item->id, 'label' => $item->name])->all()],
+                                ['name' => 'budget_amount', 'label' => 'Budget', 'type' => 'number', 'min' => 0, 'step' => '0.01', 'required' => true, 'align' => 'end', 'width' => '160px'],
+                                ['name' => 'purchase_amount', 'label' => 'Belanja', 'type' => 'number', 'min' => 0, 'step' => '0.01', 'required' => true, 'align' => 'end', 'width' => '160px'],
+                                ['name' => 'description', 'label' => 'Keterangan', 'type' => 'text', 'maxLength' => 255, 'placeholder' => 'Opsional', 'width' => '240px'],
+                            ];
+                        @endphp
+                        @include('pages.admin.accounting.partials.bulk-entry-fields', ['bulkKey' => 'supplier-debt', 'bulkTitle' => 'Daftar Hutang Supplier', 'bulkUsesStore' => true])
+                    @endif
                 </form>
             </div>
         </div>

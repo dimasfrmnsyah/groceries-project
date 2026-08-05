@@ -1,7 +1,9 @@
 @extends('layouts.app')
 
 @section('content')
-@php($isEdit = $mode === 'edit')
+@php
+    $isEdit = $mode === 'edit';
+@endphp
 <div class="page-breadcrumb d-none d-sm-flex align-items-center mb-3">
     <div class="breadcrumb-title pe-3">Piutang Pelanggan</div>
     <div class="ps-3">
@@ -23,12 +25,13 @@
 @if($errors->any()) <div class="alert alert-danger">Form masih error. Cek input yang ditandai.</div> @endif
 
 <div class="row">
-    <div class="col-xl-10 mx-auto">
+    <div class="{{ $isEdit ? 'col-xl-10' : 'col-12' }} mx-auto">
         <div class="card">
             <div class="card-body">
                 <form method="POST" action="{{ $isEdit ? route('accounting.receivables.update', $row->id) : route('accounting.receivables.store') }}">
                     @csrf
                     @if($isEdit) @method('PUT') @endif
+                    @if($isEdit)
                     <div class="row">
                         <div class="col-md-6 mb-3">
                             <label class="form-label">Tanggal</label>
@@ -84,6 +87,19 @@
                             <button class="btn btn-primary">{{ $isEdit ? 'Update' : 'Simpan' }}</button>
                         </div>
                     </div>
+                    @else
+                        @php
+                            $bulkFields = [
+                                ['name' => 'date', 'label' => 'Tanggal', 'type' => 'date', 'default' => now('Asia/Jakarta')->toDateString(), 'required' => true, 'carry' => true, 'width' => '155px'],
+                                ['name' => 'customer_id', 'label' => 'Pelanggan', 'type' => 'select', 'placeholder' => 'Pilih Pelanggan', 'carry' => true, 'width' => '210px', 'options' => $customers->map(fn ($item) => ['value' => $item->id, 'label' => $item->customer_name])->all()],
+                                ['name' => 'product_id', 'label' => 'Produk', 'type' => 'select', 'placeholder' => 'Pilih Produk', 'required' => true, 'width' => '270px', 'options' => $products->map(fn ($item) => ['value' => $item->id, 'label' => '['.$item->product_code.'] '.$item->product_name])->all()],
+                                ['name' => 'quantity', 'label' => 'Qty', 'type' => 'number', 'default' => 1, 'min' => 1, 'step' => 1, 'required' => true, 'align' => 'end', 'width' => '110px'],
+                                ['name' => 'amount', 'label' => 'Nominal', 'type' => 'number', 'min' => 0, 'step' => '0.01', 'required' => true, 'align' => 'end', 'width' => '160px'],
+                                ['name' => 'description', 'label' => 'Keterangan', 'type' => 'text', 'maxLength' => 255, 'placeholder' => 'Opsional', 'width' => '230px'],
+                            ];
+                        @endphp
+                        @include('pages.admin.accounting.partials.bulk-entry-fields', ['bulkKey' => 'receivable', 'bulkTitle' => 'Daftar Piutang Pelanggan', 'bulkUsesStore' => true])
+                    @endif
                 </form>
             </div>
         </div>

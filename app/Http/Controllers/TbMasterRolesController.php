@@ -4,8 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Models\TbMasterRole;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Yajra\DataTables\Facades\DataTables;
 
 class TbMasterRolesController extends Controller
@@ -35,20 +38,15 @@ class TbMasterRolesController extends Controller
 
     public function store(Request $request)
     {
-         $data = $request->validate([
-            'role_name' => 'required|string|max:100',
+        $request->merge(['role_name' => $this->normalizeRoleName($request->input('role_name'))]);
+        $data = $request->validate([
+            'role_name' => ['required', 'string', 'max:100', 'regex:/^[a-z0-9_]+$/', 'unique:tb_master_roles,role_name'],
         ]);
-        DB::beginTransaction();
-        try {
-            TbMasterRole::create($data);
-            DB::commit();
-            return redirect('/settings/roles')->with('success', 'Data berhasil dikirim!');
+        $data['is_active'] = 1;
+        TbMasterRole::create($data);
 
-
-        } catch(\Exception $e) {
-            DB::rollBack();
-            return back()->with('error', $e->getMessage());
-        } 
+        return redirect()->route('settings.roles.index')
+            ->with('success', 'Role berhasil dibuat dan sudah tersedia pada form user.');
     }
     
     public function create(Request $request) 
@@ -64,33 +62,61 @@ class TbMasterRolesController extends Controller
 
     public function update(Request $request, $id)
     {
-         $data = $request->validate([
-            'role_name' => 'required|string|max:100',
-            'is_active' => 'required'
+        $role = TbMasterRole::findOrFail($id);
+        $oldName = strtolower(trim((string) $role->role_name));
+        $request->merge(['role_name' => $this->normalizeRoleName($request->input('role_name'))]);
+        $data = $request->validate([
+            'role_name' => ['required', 'string', 'max:100', 'regex:/^[a-z0-9_]+$/', Rule::unique('tb_master_roles', 'role_name')->ignore($role->id)],
+            'is_active' => ['required', 'boolean'],
         ]);
 
-        DB::beginTransaction();
-        try {
-            TbMasterRole::where('id', $id)->update($data);
-            DB::commit();
-            return redirect('/settings/roles')->with('success', 'Data berhasil diperbaharui!');
+        DB::transaction(function () use ($role, $data, $oldName) {
+            $role->update($data);
 
-        } catch(\Exception $e) {
-            DB::rollBack();
-            return back()->with('error', $e->getMessage());
+            if ($oldName !== $data['role_name']) {
+                DB::table('users')->whereRaw('LOWER(TRIM(roles)) = ?', [$oldName])->update(['roles' => $data['role_name']]);
+                if (Schema::hasTable('tb_master_menu_roles') && Schema::hasColumn('tb_master_menu_roles', 'role_name')) {
+                    DB::table('tb_master_menu_roles')
+                        ->whereRaw('LOWER(TRIM(role_name)) = ?', [$oldName])
+                        ->update(['role_name' => $data['role_name'], 'updated_at' => now()]);
+                }
+            }
+        });
+        Cache::forget('menu_allowed_routes:'.$oldName);
+        Cache::forget('menu_allowed_routes:'.$data['role_name']);
 
-        }
+        return redirect()->route('settings.roles.index')->with('success', 'Role berhasil diperbarui.');
     }
 
     public function destroy($id)
     {
-        try {
-            TbMasterRole::where('id', $id)->delete();
+        $role = TbMasterRole::findOrFail($id);
+        $roleName = strtolower(trim((string) $role->role_name));
 
-            return resp_success('Data berhasil dihapus');
-        } catch(\Exception $e) {
-            return resp_error($e->getMessage());
+        if ($roleName === 'superadmin') {
+            return resp_error('Role superadmin tidak dapat dihapus.');
         }
+
+        if (DB::table('users')->whereRaw('LOWER(TRIM(roles)) = ?', [$roleName])->exists()) {
+            return resp_error('Role masih digunakan oleh user. Pindahkan user ke role lain terlebih dahulu.');
+        }
+
+        DB::transaction(function () use ($role, $roleName) {
+            if (Schema::hasTable('tb_master_menu_roles')) {
+                DB::table('tb_master_menu_roles')->where('role_id', $role->id)->delete();
+                if (Schema::hasColumn('tb_master_menu_roles', 'role_name')) {
+                    DB::table('tb_master_menu_roles')->whereRaw('LOWER(TRIM(role_name)) = ?', [$roleName])->delete();
+                }
+            }
+            $role->delete();
+        });
+        Cache::forget('menu_allowed_routes:'.$roleName);
+
+        return resp_success('Role berhasil dihapus.');
     }
 
+    private function normalizeRoleName($name): string
+    {
+        return Str::of((string) $name)->trim()->lower()->slug('_')->toString();
+    }
 }
