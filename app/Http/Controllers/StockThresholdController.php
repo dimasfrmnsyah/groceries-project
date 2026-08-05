@@ -89,13 +89,19 @@ class StockThresholdController extends Controller
 
         $excludeStockOpname = function ($query) use ($hasSellerIdColumn, $hasInvoiceColumn) {
             if ($hasSellerIdColumn) {
-                $query->where('sl.seller_id', '!=', 1);
-                return;
+                $query->where(function ($q) {
+                    $q->whereNull('sl.seller_id')
+                      ->orWhere('sl.seller_id', '!=', 1);
+                });
             }
             if ($hasInvoiceColumn) {
                 $query->where(function ($q) {
                     $q->whereNull('sl.no_invoice')
-                      ->orWhere('sl.no_invoice', 'not like', 'SO-ADJ-%');
+                      ->orWhere(function ($qq) {
+                          $qq->where('sl.no_invoice', 'not like', 'SO-ADJ-%')
+                             ->where('sl.no_invoice', 'not like', 'AR-%')
+                             ->where('sl.no_invoice', 'not like', 'TRF-%');
+                      });
                 });
             }
         };

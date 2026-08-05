@@ -89,7 +89,11 @@ class ReportController extends Controller
         if ($hasInvoiceColumn) {
             $query->where(function ($q) {
                 $q->whereNull('s.no_invoice')
-                  ->orWhere('s.no_invoice', 'not like', 'SO-ADJ-%');
+                  ->orWhere(function ($qq) {
+                      $qq->where('s.no_invoice', 'not like', 'SO-ADJ-%')
+                         ->where('s.no_invoice', 'not like', 'AR-%')
+                         ->where('s.no_invoice', 'not like', 'TRF-%');
+                  });
             });
         }
     };

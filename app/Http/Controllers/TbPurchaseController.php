@@ -94,6 +94,7 @@ class TbPurchaseController extends Controller
         'products.*.product_id' => 'required|integer|exists:tb_products,id',
         'products.*.stock' => 'required|integer|min:1',
         'products.*.description' => 'nullable|string',
+        'supplier_budget' => 'nullable|numeric|min:0',
     ]);
 
     $productPrices = tb_products::whereIn('id', collect($validated['products'])->pluck('product_id')->all())
@@ -131,6 +132,28 @@ class TbPurchaseController extends Controller
                 $payload['store_id'] = $storeId;
             }
             tb_incoming_goods::create($payload);
+        }
+
+        $supplierBudget = (float) ($validated['supplier_budget'] ?? 0);
+        if ($supplierBudget > 0 && $totalPrice > $supplierBudget && Schema::hasTable('tb_supplier_debts')) {
+            $debtPayload = [
+                'date' => now('Asia/Jakarta')->toDateString(),
+                'supplier_id' => $validated['supplier_id'],
+                'purchase_id' => $purchase->id,
+                'budget_amount' => $supplierBudget,
+                'purchase_amount' => $totalPrice,
+                'debt_amount' => $totalPrice - $supplierBudget,
+                'paid_amount' => 0,
+                'status' => 'open',
+                'description' => 'Otomatis dari pembelian',
+                'created_by' => auth()->id(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ];
+            if (Schema::hasColumn('tb_supplier_debts', 'store_id')) {
+                $debtPayload['store_id'] = $storeId;
+            }
+            DB::table('tb_supplier_debts')->insert($debtPayload);
         }
 
         DB::commit();

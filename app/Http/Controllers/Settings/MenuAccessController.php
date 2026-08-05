@@ -4,18 +4,17 @@ namespace App\Http\Controllers\Settings;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class MenuAccessController extends Controller
 {
-    private array $roles = ['superadmin', 'admin', 'staff'];
-
     public function index(Request $request)
     {
-        $roles = collect($this->roles);
+        $roles = $this->roles();
         $currentRole = strtolower(trim((string) $request->query('role', 'superadmin')));
         if (!in_array($currentRole, $roles->all(), true)) {
-            $currentRole = 'superadmin';
+            $currentRole = $roles->first() ?? 'superadmin';
         }
 
         $allowedIds = DB::table('tb_master_menu_roles')
@@ -61,7 +60,7 @@ class MenuAccessController extends Controller
         ]);
 
         $role = strtolower(trim($data['role_name']));
-        if (!in_array($role, $this->roles, true)) {
+        if (!in_array($role, $this->roles()->all(), true)) {
             return back()->withErrors('Role tidak dikenal.');
         }
 
@@ -88,6 +87,7 @@ class MenuAccessController extends Controller
                     DB::table('tb_master_menu_roles')->insert($rows);
                 }
             });
+            Cache::forget('menu_allowed_routes:'.$role);
 
             return redirect()
                 ->route('settings.access.index', ['role' => $role])
@@ -114,6 +114,7 @@ class MenuAccessController extends Controller
                 DB::table('tb_master_menu_roles')->insert($rows);
             }
         });
+        Cache::forget('menu_allowed_routes:'.$role);
 
         return redirect()
             ->route('settings.access.index', ['role' => $role])
@@ -148,5 +149,23 @@ class MenuAccessController extends Controller
         }
 
         return array_keys($result);
+    }
+
+    private function roles()
+    {
+        $roles = DB::table('tb_master_roles')
+            ->where('is_active', 1)
+            ->orderBy('role_name')
+            ->pluck('role_name')
+            ->map(fn ($role) => strtolower(trim((string) $role)))
+            ->filter()
+            ->unique()
+            ->values();
+
+        if (!$roles->contains('superadmin')) {
+            $roles->prepend('superadmin');
+        }
+
+        return $roles;
     }
 }

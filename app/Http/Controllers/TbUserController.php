@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
 use Yajra\DataTables\Facades\DataTables;
 
 class TbUserController extends Controller
@@ -70,7 +71,11 @@ class TbUserController extends Controller
         } else {
             $stores = store_access_list($user);
         }
-        return view('pages.admin.manage_user.create', ['stores' => $stores]);
+        return view('pages.admin.manage_user.create', [
+            'stores' => $stores,
+            'availableRoles' => $this->availableRoles(),
+            'selectedStoreIds' => [],
+        ]);
     }
 
     /**
@@ -78,11 +83,12 @@ class TbUserController extends Controller
      */
     public function store(Request $request)
     {
+        $request->merge(['roles' => strtolower(trim((string) $request->input('roles')))]);
         $data = $request->validate([
             'name' => 'required',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|min:8|confirmed',
-            'roles' => 'required',
+            'roles' => ['required', Rule::in($this->assignableRoles())],
             'store_id' => 'nullable|integer|exists:tb_stores,id',
             'store_ids' => 'nullable|array',
             'store_ids.*' => 'integer|exists:tb_stores,id',
@@ -105,8 +111,8 @@ class TbUserController extends Controller
                 return redirect()->back()->withErrors(['store_ids' => 'Store tidak diizinkan untuk akun ini.']);
             }
         }
-        if (in_array($role, ['staff', 'kasir', 'cashier'], true) && $storeIds->count() > 1) {
-            return redirect()->back()->withErrors(['store_ids' => 'Staff hanya boleh memiliki 1 store.']);
+        if (!in_array($role, ['admin', 'superadmin'], true) && $storeIds->count() > 1) {
+            return redirect()->back()->withErrors(['store_ids' => 'Role ini hanya boleh memiliki 1 store.']);
         }
 
         $data['store_id'] = $storeIds->isNotEmpty() ? $storeIds->first() : null;
@@ -162,6 +168,7 @@ class TbUserController extends Controller
             'user' => $user,
             'stores' => $stores,
             'selectedStoreIds' => $selectedStoreIds,
+            'availableRoles' => $this->availableRoles($user?->roles),
         ]);
     }
 
@@ -170,10 +177,12 @@ class TbUserController extends Controller
      */
     public function update(Request $request, $id)
     {
+        $user = User::findOrFail($id);
+        $request->merge(['roles' => strtolower(trim((string) $request->input('roles')))]);
         $data = $request->validate([
             'name' => 'required',
             'email' => 'required|string|email|max:255|unique:users,email,' . $id,
-            'roles' => 'required',
+            'roles' => ['required', Rule::in($this->assignableRoles($user->roles))],
             'store_id' => 'nullable|integer|exists:tb_stores,id',
             'store_ids' => 'nullable|array',
             'store_ids.*' => 'integer|exists:tb_stores,id',
@@ -196,8 +205,8 @@ class TbUserController extends Controller
                 return redirect()->back()->withErrors(['store_ids' => 'Store tidak diizinkan untuk akun ini.']);
             }
         }
-        if (in_array($role, ['staff', 'kasir', 'cashier'], true) && $storeIds->count() > 1) {
-            return redirect()->back()->withErrors(['store_ids' => 'Staff hanya boleh memiliki 1 store.']);
+        if (!in_array($role, ['admin', 'superadmin'], true) && $storeIds->count() > 1) {
+            return redirect()->back()->withErrors(['store_ids' => 'Role ini hanya boleh memiliki 1 store.']);
         }
 
         $data['store_id'] = $storeIds->isNotEmpty() ? $storeIds->first() : null;
@@ -289,5 +298,37 @@ class TbUserController extends Controller
             DB::rollBack();
             return response()->json(['status' => 'error', 'message' => $e->getMessage()]);
         }
+    }
+
+    private function availableRoles(?string $currentRole = null)
+    {
+        $roles = collect(['admin', 'staff']);
+
+        if (Schema::hasTable('tb_master_roles')) {
+            $roles = $roles->merge(
+                DB::table('tb_master_roles')
+                    ->where('is_active', 1)
+                    ->pluck('role_name')
+            );
+        }
+
+        if ($currentRole) {
+            $roles->push($currentRole);
+        }
+
+        if (strtolower((string) auth()->user()?->roles) === 'superadmin') {
+            $roles->prepend('superadmin');
+        }
+
+        return $roles
+            ->map(fn ($role) => strtolower(trim((string) $role)))
+            ->filter()
+            ->unique()
+            ->values();
+    }
+
+    private function assignableRoles(?string $currentRole = null): array
+    {
+        return $this->availableRoles($currentRole)->all();
     }
 }

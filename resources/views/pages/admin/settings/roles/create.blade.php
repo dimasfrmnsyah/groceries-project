@@ -33,7 +33,11 @@
                   <input class="form-control form-control" 
                   type="text" 
                   name="role_name" 
-                  value="{{ isset($role) ? $role->role_name : old('role_name') }}">
+                  value="{{ old('role_name', $role->role_name ?? '') }}"
+                  placeholder="Contoh: supervisor gudang"
+                  required>
+
+                  <small class="text-muted">Nama disimpan dalam format lowercase, misalnya <code>supervisor_gudang</code>.</small>
 
                   @error('role_name')
                       <div class="text-danger">{{ $message }}</div>
@@ -53,7 +57,7 @@
                 @endif
 
                 <div class="col-12 text-end">
-                  <button class="btn btn-primary" menu="submit">{{isset($role) ? 'Update' : 'Tambah'}}</button>
+                  <button class="btn btn-primary" type="submit">{{isset($role) ? 'Update' : 'Tambah'}}</button>
                 </div>
             </div>
             </form>

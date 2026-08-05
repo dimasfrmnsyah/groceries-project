@@ -62,6 +62,12 @@
                         <canvas id="profitChart" height="100"></canvas>
                     </div>
                 </div>
+                <div class="card mb-4">
+                    <div class="card-header">Grafik Penjualan Harian Bulan Ini</div>
+                    <div class="card-body">
+                        <canvas id="dailySalesChart" height="100"></canvas>
+                    </div>
+                </div>
                 <!-- Top 5 Produk Paling Laku -->
                 <div class="card mb-4">
                     <div class="card-header">Top 5 Produk Paling Laku</div>
@@ -134,6 +140,38 @@
                     tooltip: {
                         callbacks: {
                             label: ctx => `${ctx.dataset.label}: Rp ${ctx.parsed.y.toLocaleString('id-ID')}`
+                        }
+                    }
+                }
+            }
+        });
+
+        const dailyCtx = document.getElementById('dailySalesChart').getContext('2d');
+        new Chart(dailyCtx, {
+            type: 'line',
+            data: {
+                labels: @json($dailyMonthLabels),
+                datasets: [{
+                    label: 'Penjualan Harian',
+                    data: @json($dailyMonthSales),
+                    borderColor: 'rgba(25, 135, 84, 1)',
+                    backgroundColor: 'rgba(25, 135, 84, 0.12)',
+                    tension: 0.25,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { callback: val => 'Rp ' + val.toLocaleString('id-ID') }
+                    }
+                },
+                plugins: {
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => `Penjualan: Rp ${ctx.parsed.y.toLocaleString('id-ID')}`
                         }
                     }
                 }
