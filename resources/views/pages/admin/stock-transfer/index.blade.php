@@ -1,5 +1,16 @@
 @extends('layouts.app')
 
+@section('css')
+<link href="{{ asset('assets/plugins/select2/css/select2.min.css') }}" rel="stylesheet" />
+<link href="{{ asset('assets/plugins/select2/css/select2-bootstrap-5-theme.min.css') }}" rel="stylesheet" />
+<style>
+    .stock-transfer-product + .select2-container { width: 100% !important; }
+    .stock-transfer-product + .select2-container .select2-selection--single { height: 38px; }
+    .stock-transfer-product + .select2-container .select2-selection__rendered { line-height: 36px; }
+    .stock-transfer-product + .select2-container .select2-selection__arrow { height: 36px; }
+</style>
+@endsection
+
 @section('content')
 <div class="page-breadcrumb d-none d-sm-flex align-items-center mb-3">
     <div class="breadcrumb-title pe-3">Transfer Stok Antar Toko</div>
@@ -18,10 +29,10 @@
             </div>
             <div class="col-md-3">
                 <label class="form-label">Produk</label>
-                <select name="product_id" class="form-select" required>
+                <select name="product_id" id="stock-transfer-product" class="form-select stock-transfer-product" required>
                     <option value="">-- pilih produk --</option>
                     @foreach($products as $product)
-                        <option value="{{ $product->id }}">[{{ $product->product_code }}] {{ $product->product_name }}</option>
+                        <option value="{{ $product->id }}" @selected((int)old('product_id') === (int)$product->id)>[{{ $product->product_code }}] {{ $product->product_name }}</option>
                     @endforeach
                 </select>
             </div>
@@ -91,4 +102,23 @@
         </div>
     </div>
 </div>
+@endsection
+
+@section('scripts')
+<script src="{{ asset('assets/plugins/select2/js/select2.min.js') }}"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    if (!window.jQuery || !jQuery.fn.select2) return;
+    jQuery('#stock-transfer-product').select2({
+        width: '100%',
+        theme: 'bootstrap-5',
+        placeholder: 'Cari kode atau nama produk',
+        allowClear: true,
+        language: {
+            noResults: function () { return 'Produk tidak ditemukan'; },
+            searching: function () { return 'Mencari…'; }
+        }
+    });
+});
+</script>
 @endsection

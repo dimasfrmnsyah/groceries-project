@@ -66,6 +66,13 @@
                         <tr><td colspan="5" class="text-center">Belum ada data.</td></tr>
                     @endforelse
                 </tbody>
+                <tfoot class="table-light fw-semibold">
+                    <tr>
+                        <td colspan="2" class="text-end">Total sesuai filter</td>
+                        <td class="text-end">Rp {{ number_format($totalNominal, 0, ',', '.') }}</td>
+                        <td colspan="2"></td>
+                    </tr>
+                </tfoot>
             </table>
         </div>
     </div>

@@ -132,6 +132,9 @@ class AccountingController extends Controller
     public function budgeting(Request $request)
     {
         $storeId = $this->selectedStoreId($request);
+        $totalAmount = DB::table('tb_budgets')
+            ->when($storeId, fn ($q) => $q->where('store_id', $storeId))
+            ->sum('amount');
         $rows = DB::table('tb_budgets as b')
             ->leftJoin('tb_stores as s', 's.id', '=', 'b.store_id')
             ->leftJoin('tb_accounting_accounts as a', 'a.id', '=', 'b.account_id')
@@ -146,6 +149,7 @@ class AccountingController extends Controller
             'stores' => $this->stores(),
             'selectedStoreId' => $storeId,
             'rows' => $rows,
+            'totalAmount' => $totalAmount,
         ]);
     }
 
@@ -207,6 +211,9 @@ class AccountingController extends Controller
     public function expenses(Request $request)
     {
         $storeId = $this->selectedStoreId($request);
+        $totalAmount = DB::table('tb_expenses')
+            ->when($storeId, fn ($q) => $q->where('store_id', $storeId))
+            ->sum('amount');
         $rows = DB::table('tb_expenses as e')
             ->leftJoin('tb_stores as s', 's.id', '=', 'e.store_id')
             ->leftJoin('tb_accounting_accounts as a', 'a.id', '=', 'e.account_id')
@@ -221,6 +228,7 @@ class AccountingController extends Controller
             'stores' => $this->stores(),
             'selectedStoreId' => $storeId,
             'rows' => $rows,
+            'totalAmount' => $totalAmount,
         ]);
     }
 
@@ -282,6 +290,13 @@ class AccountingController extends Controller
     public function receivables(Request $request)
     {
         $storeId = $this->selectedStoreId($request);
+        $totals = DB::table('tb_customer_receivables')
+            ->when($storeId, fn ($q) => $q->where('store_id', $storeId))
+            ->selectRaw('COALESCE(SUM(quantity), 0) AS quantity')
+            ->selectRaw('COALESCE(SUM(amount), 0) AS amount')
+            ->selectRaw('COALESCE(SUM(paid_amount), 0) AS paid_amount')
+            ->selectRaw('COALESCE(SUM(amount - paid_amount), 0) AS remaining_amount')
+            ->first();
         $rows = DB::table('tb_customer_receivables as r')
             ->leftJoin('tb_customers as c', 'c.id', '=', 'r.customer_id')
             ->leftJoin('tb_products as p', 'p.id', '=', 'r.product_id')
@@ -296,6 +311,7 @@ class AccountingController extends Controller
             'stores' => $this->stores(),
             'selectedStoreId' => $storeId,
             'rows' => $rows,
+            'totals' => $totals,
         ]);
     }
 
@@ -478,6 +494,14 @@ class AccountingController extends Controller
     public function supplierDebts(Request $request)
     {
         $storeId = $this->selectedStoreId($request);
+        $totals = DB::table('tb_supplier_debts')
+            ->when($storeId, fn ($q) => $q->where('store_id', $storeId))
+            ->selectRaw('COALESCE(SUM(budget_amount), 0) AS budget_amount')
+            ->selectRaw('COALESCE(SUM(purchase_amount), 0) AS purchase_amount')
+            ->selectRaw('COALESCE(SUM(debt_amount), 0) AS debt_amount')
+            ->selectRaw('COALESCE(SUM(paid_amount), 0) AS paid_amount')
+            ->selectRaw('COALESCE(SUM(debt_amount - paid_amount), 0) AS remaining_amount')
+            ->first();
         $rows = DB::table('tb_supplier_debts as d')
             ->leftJoin('tb_suppliers as sp', 'sp.id', '=', 'd.supplier_id')
             ->leftJoin('tb_stores as st', 'st.id', '=', 'd.store_id')
@@ -491,6 +515,7 @@ class AccountingController extends Controller
             'stores' => $this->stores(),
             'selectedStoreId' => $storeId,
             'rows' => $rows,
+            'totals' => $totals,
         ]);
     }
 
@@ -596,6 +621,9 @@ class AccountingController extends Controller
     public function cashOpname(Request $request)
     {
         $storeId = $this->selectedStoreId($request);
+        $totalNominal = DB::table('tb_cash_opnames')
+            ->when($storeId, fn ($q) => $q->where('store_id', $storeId))
+            ->sum('nominal');
         $rows = DB::table('tb_cash_opnames as c')
             ->leftJoin('tb_stores as s', 's.id', '=', 'c.store_id')
             ->select('c.*', 's.store_name')
@@ -609,6 +637,7 @@ class AccountingController extends Controller
             'stores' => $this->stores(),
             'selectedStoreId' => $storeId,
             'rows' => $rows,
+            'totalNominal' => $totalNominal,
         ]);
     }
 

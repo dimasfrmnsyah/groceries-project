@@ -53,6 +53,7 @@
                         <th class="text-end">Qty</th>
                         <th class="text-end">Nominal</th>
                         <th class="text-end">Terbayar</th>
+                        <th class="text-end">Sisa</th>
                         <th>Status</th>
                         <th style="width: 190px;">Aksi</th>
                     </tr>
@@ -67,6 +68,7 @@
                             <td class="text-end">{{ $row->quantity }}</td>
                             <td class="text-end">{{ number_format($row->amount, 0, ',', '.') }}</td>
                             <td class="text-end">{{ number_format($row->paid_amount, 0, ',', '.') }}</td>
+                            <td class="text-end">{{ number_format(max(0, $row->amount - $row->paid_amount), 0, ',', '.') }}</td>
                             <td>{{ $row->status }}</td>
                             <td>
                                 <div class="d-flex gap-1">
@@ -83,9 +85,19 @@
                             </td>
                         </tr>
                     @empty
-                        <tr><td colspan="9" class="text-center">Belum ada data.</td></tr>
+                        <tr><td colspan="10" class="text-center">Belum ada data.</td></tr>
                     @endforelse
                 </tbody>
+                <tfoot class="table-light fw-semibold">
+                    <tr>
+                        <td colspan="4" class="text-end">Total sesuai filter</td>
+                        <td class="text-end">{{ number_format($totals->quantity, 0, ',', '.') }}</td>
+                        <td class="text-end">Rp {{ number_format($totals->amount, 0, ',', '.') }}</td>
+                        <td class="text-end">Rp {{ number_format($totals->paid_amount, 0, ',', '.') }}</td>
+                        <td class="text-end">Rp {{ number_format($totals->remaining_amount, 0, ',', '.') }}</td>
+                        <td colspan="2"></td>
+                    </tr>
+                </tfoot>
             </table>
         </div>
     </div>
