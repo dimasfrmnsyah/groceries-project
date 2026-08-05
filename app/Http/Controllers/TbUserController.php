@@ -111,8 +111,8 @@ class TbUserController extends Controller
                 return redirect()->back()->withErrors(['store_ids' => 'Store tidak diizinkan untuk akun ini.']);
             }
         }
-        if (!in_array($role, ['admin', 'superadmin'], true) && $storeIds->count() > 1) {
-            return redirect()->back()->withErrors(['store_ids' => 'Role ini hanya boleh memiliki 1 store.']);
+        if (in_array($role, ['staff', 'kasir', 'cashier'], true) && $storeIds->count() > 1) {
+            return redirect()->back()->withErrors(['store_ids' => 'Role staff/kasir hanya boleh memiliki 1 store.']);
         }
 
         $data['store_id'] = $storeIds->isNotEmpty() ? $storeIds->first() : null;
@@ -205,8 +205,8 @@ class TbUserController extends Controller
                 return redirect()->back()->withErrors(['store_ids' => 'Store tidak diizinkan untuk akun ini.']);
             }
         }
-        if (!in_array($role, ['admin', 'superadmin'], true) && $storeIds->count() > 1) {
-            return redirect()->back()->withErrors(['store_ids' => 'Role ini hanya boleh memiliki 1 store.']);
+        if (in_array($role, ['staff', 'kasir', 'cashier'], true) && $storeIds->count() > 1) {
+            return redirect()->back()->withErrors(['store_ids' => 'Role staff/kasir hanya boleh memiliki 1 store.']);
         }
 
         $data['store_id'] = $storeIds->isNotEmpty() ? $storeIds->first() : null;

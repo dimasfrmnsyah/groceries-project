@@ -129,7 +129,7 @@
               @endforeach
             </select>
           </div>
-          <small class="text-muted" id="store-help">Admin bisa pilih lebih dari satu toko (klik satu-satu).</small>
+          <small class="text-muted" id="store-help">Role dinamis dapat dipasangkan ke lebih dari satu toko.</small>
 
           @error('store_ids')
         <div class="text-danger">{{ $message }}</div>
@@ -193,9 +193,9 @@
     const setStoreMode = (role) => {
       if (!storeHelp || !storeMultiWrap || !storeSingleWrap || !storeSingleSelect) return;
       const normalized = String(role || '').toLowerCase();
-      const isAdmin = normalized === 'admin';
       const isStaff = ['staff', 'kasir', 'cashier'].includes(normalized);
       const isSuperadmin = normalized === 'superadmin';
+      const canUseMultipleStores = normalized !== '' && !isStaff && !isSuperadmin;
 
       if (isSuperadmin) {
         storeMultiWrap.classList.add('d-none');
@@ -203,7 +203,7 @@
         storeCheckboxes.forEach((cb) => { cb.disabled = true; });
         storeSingleSelect.disabled = true;
         storeHelp.textContent = 'Superadmin otomatis akses semua toko.';
-      } else if (isAdmin) {
+      } else if (canUseMultipleStores) {
         storeMultiWrap.classList.remove('d-none');
         storeSingleWrap.classList.add('d-none');
         storeCheckboxes.forEach((cb) => { cb.disabled = false; });
@@ -213,7 +213,7 @@
           const match = Array.from(storeCheckboxes).find((cb) => cb.value === selectedValue);
           if (match) match.checked = true;
         }
-        storeHelp.textContent = 'Admin bisa pilih lebih dari satu toko (klik satu-satu).';
+        storeHelp.textContent = 'Role ini bisa mengakses lebih dari satu toko.';
       } else if (isStaff) {
         storeMultiWrap.classList.add('d-none');
         storeSingleWrap.classList.remove('d-none');

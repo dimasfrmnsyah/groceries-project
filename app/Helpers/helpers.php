@@ -145,7 +145,7 @@ if (!function_exists('store_access_can_select')) {
             return true;
         }
 
-        if ($role !== 'admin') {
+        if (in_array($role, ['staff', 'kasir', 'cashier'], true)) {
             return false;
         }
 
