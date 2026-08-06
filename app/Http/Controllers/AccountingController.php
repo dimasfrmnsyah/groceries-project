@@ -1096,7 +1096,8 @@ class AccountingController extends Controller
             ->whereRaw('LOWER(TRIM(og.recorded_by)) <> ?', ['stock opname'])
             ->selectRaw('TRIM(og.recorded_by) AS name, s.store_id, st.store_name')
             ->groupByRaw('TRIM(og.recorded_by), s.store_id, st.store_name')
-            ->orderByRaw('LOWER(TRIM(og.recorded_by))')
+            // Gunakan alias hasil grouping agar kompatibel dengan MySQL ONLY_FULL_GROUP_BY.
+            ->orderBy('name')
             ->orderBy('st.store_name')
             ->get();
     }
