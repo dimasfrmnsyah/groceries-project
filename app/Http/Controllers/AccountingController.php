@@ -621,9 +621,12 @@ class AccountingController extends Controller
     public function cashOpname(Request $request)
     {
         $storeId = $this->selectedStoreId($request);
-        $totalNominal = DB::table('tb_cash_opnames')
+        $totals = DB::table('tb_cash_opnames')
             ->when($storeId, fn ($q) => $q->where('store_id', $storeId))
-            ->sum('nominal');
+            ->selectRaw('COALESCE(SUM(running_turnover), 0) AS running_turnover')
+            ->selectRaw('COALESCE(SUM(nominal), 0) AS nominal')
+            ->selectRaw('COALESCE(SUM(difference), 0) AS difference')
+            ->first();
         $rows = DB::table('tb_cash_opnames as c')
             ->leftJoin('tb_stores as s', 's.id', '=', 'c.store_id')
             ->select('c.*', 's.store_name')
@@ -637,7 +640,21 @@ class AccountingController extends Controller
             'stores' => $this->stores(),
             'selectedStoreId' => $storeId,
             'rows' => $rows,
-            'totalNominal' => $totalNominal,
+            'totals' => $totals,
+        ]);
+    }
+
+    public function cashOpnameTurnover(Request $request)
+    {
+        $data = $request->validate([
+            'store_id' => 'required|integer|exists:tb_stores,id',
+            'cashier_name' => 'required|string|max:255',
+            'audited_at' => 'required|date|before_or_equal:now',
+        ]);
+        $this->requireStoreAccess((int) $data['store_id']);
+
+        return response()->json([
+            'turnover' => $this->salesTurnover((int) $data['store_id'], $data['cashier_name'], $data['audited_at']),
         ]);
     }
 
@@ -646,23 +663,18 @@ class AccountingController extends Controller
         return view('pages.admin.accounting.cash-opname-form', $this->formData([
             'mode' => 'create',
             'row' => null,
+            'cashiers' => $this->cashierOptions(),
+            'denominationOptions' => $this->cashDenominations(),
         ]));
     }
 
     public function storeCashOpname(Request $request)
     {
-        $entries = $this->validateCashOpnameEntries($request);
+        $data = $this->validateCashOpnameData($request);
+        DB::table('tb_cash_opnames')->insert($this->withAudit($this->cashOpnamePayload($data)));
 
-        DB::transaction(function () use ($entries) {
-            $rows = array_map(fn (array $entry) => $this->withAudit($entry), $entries);
-            DB::table('tb_cash_opnames')->insert($rows);
-        });
-
-        $storeIds = array_values(array_unique(array_column($entries, 'store_id')));
-        $routeParameters = count($storeIds) === 1 ? ['store' => $storeIds[0]] : [];
-
-        return redirect()->route('accounting.cash-opname.index', $routeParameters)
-            ->with('success', count($entries).' cash opname berhasil disimpan.');
+        return redirect()->route('accounting.cash-opname.index', ['store' => $data['store_id']])
+            ->with('success', 'Audit cash opname berhasil disimpan.');
     }
 
     public function editCashOpname(int $id)
@@ -670,6 +682,8 @@ class AccountingController extends Controller
         return view('pages.admin.accounting.cash-opname-form', $this->formData([
             'mode' => 'edit',
             'row' => $this->findScopedRow('tb_cash_opnames', $id),
+            'cashiers' => $this->cashierOptions(),
+            'denominationOptions' => $this->cashDenominations(),
         ]));
     }
 
@@ -677,7 +691,7 @@ class AccountingController extends Controller
     {
         $row = $this->findScopedRow('tb_cash_opnames', $id);
         $data = $this->validateCashOpnameData($request);
-        DB::table('tb_cash_opnames')->where('id', $row->id)->update($this->withUpdateTimestamp($data));
+        DB::table('tb_cash_opnames')->where('id', $row->id)->update($this->withUpdateTimestamp($this->cashOpnamePayload($data)));
 
         return redirect()->route('accounting.cash-opname.index', ['store' => $data['store_id']])->with('success', 'Cash opname berhasil diupdate.');
     }
@@ -805,30 +819,31 @@ class AccountingController extends Controller
 
     private function validateCashOpnameData(Request $request): array
     {
-        $data = $request->validate([
-            'date' => 'required|date',
+        $rules = [
             'store_id' => 'required|integer|exists:tb_stores,id',
-            'nominal' => 'required|numeric|min:0',
+            'cashier_name' => 'required|string|max:255',
+            'audited_at' => 'required|date|before_or_equal:now',
+            'denominations_payload' => 'required|json',
             'description' => 'nullable|string|max:255',
-        ]);
+        ];
+        $data = $request->validate($rules);
+
+        $submittedCounts = json_decode($data['denominations_payload'], true);
+        if (!is_array($submittedCounts)) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'denominations_payload' => 'Data pecahan uang tidak valid.',
+            ]);
+        }
+        $countRules = [];
+        foreach (array_keys($this->cashDenominations()) as $key) {
+            $countRules[$key] = 'present|integer|min:0|max:100000';
+        }
+        $validatedCounts = validator($submittedCounts, $countRules)->validate();
+        $data['denominations'] = $validatedCounts;
+        unset($data['denominations_payload']);
         $this->requireStoreAccess((int) $data['store_id']);
 
         return $data;
-    }
-
-    private function validateCashOpnameEntries(Request $request): array
-    {
-        $data = $request->validate([
-            'store_id' => 'required|integer|exists:tb_stores,id',
-            'entries' => 'required|array|min:1|max:100',
-            'entries.*.date' => 'required|date',
-            'entries.*.nominal' => 'required|numeric|min:0',
-            'entries.*.description' => 'nullable|string|max:255',
-        ]);
-
-        $this->requireStoreAccess((int) $data['store_id']);
-
-        return array_map(fn (array $entry) => array_merge($entry, ['store_id' => (int) $data['store_id']]), $data['entries']);
     }
 
     private function supplierDebtPayload(array $data, float $paidAmount = 0): array
@@ -1009,5 +1024,97 @@ class AccountingController extends Controller
             ->sum('og.quantity_out');
 
         return max(0, (int) $incoming - (int) $outgoing);
+    }
+
+    private function cashOpnamePayload(array $data): array
+    {
+        $counts = [];
+        $physical = 0;
+        foreach ($this->cashDenominations() as $key => $option) {
+            $count = max(0, (int) ($data['denominations'][$key] ?? 0));
+            $counts[$key] = $count;
+            $physical += $count * $option['value'];
+        }
+
+        $auditedAt = \Carbon\Carbon::parse($data['audited_at'], 'Asia/Jakarta');
+        $turnover = $this->salesTurnover((int) $data['store_id'], $data['cashier_name'], $auditedAt->toDateTimeString());
+
+        return [
+            'date' => $auditedAt->toDateString(),
+            'cashier_name' => trim($data['cashier_name']),
+            'audited_at' => $auditedAt->toDateTimeString(),
+            'store_id' => (int) $data['store_id'],
+            'running_turnover' => $turnover,
+            'nominal' => $physical,
+            'difference' => $physical - $turnover,
+            'denominations' => json_encode($counts),
+            'description' => $data['description'] ?? null,
+        ];
+    }
+
+    private function salesTurnover(int $storeId, string $cashierName, string $auditedAt): float
+    {
+        $audit = \Carbon\Carbon::parse($auditedAt, 'Asia/Jakarta');
+        $query = DB::table('tb_sells as s')
+            ->join('tb_outgoing_goods as og', 'og.sell_id', '=', 's.id')
+            ->when(Schema::hasColumn('tb_sells', 'deleted_at'), fn ($q) => $q->whereNull('s.deleted_at'))
+            ->when(Schema::hasColumn('tb_outgoing_goods', 'deleted_at'), fn ($q) => $q->whereNull('og.deleted_at'))
+            ->where('s.store_id', $storeId)
+            ->whereDate('s.date', $audit->toDateString())
+            ->whereRaw('LOWER(TRIM(og.recorded_by)) = ?', [strtolower(trim($cashierName))]);
+
+        if (Schema::hasColumn('tb_sells', 'created_at')) {
+            $query->where('s.created_at', '<=', $audit->toDateTimeString());
+        }
+        if (Schema::hasColumn('tb_sells', 'seller_id')) {
+            $query->where(fn ($q) => $q->whereNull('s.seller_id')->orWhere('s.seller_id', '!=', 1));
+        }
+        if (Schema::hasColumn('tb_sells', 'no_invoice')) {
+            $query->where(function ($q) {
+                $q->whereNull('s.no_invoice')->orWhere(function ($invoice) {
+                    $invoice->where('s.no_invoice', 'not like', 'SO-ADJ-%')
+                        ->where('s.no_invoice', 'not like', 'AR-%')
+                        ->where('s.no_invoice', 'not like', 'TRF-%');
+                });
+            });
+        }
+
+        $sales = $query->select('s.id', 's.total_price')->groupBy('s.id', 's.total_price');
+        return (float) DB::query()->fromSub($sales, 'sales')->sum('total_price');
+    }
+
+    private function cashierOptions()
+    {
+        $storeIds = $this->stores()->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        return DB::table('tb_outgoing_goods as og')
+            ->join('tb_sells as s', 's.id', '=', 'og.sell_id')
+            ->leftJoin('tb_stores as st', 'st.id', '=', 's.store_id')
+            ->whereIn('s.store_id', $storeIds)
+            ->whereNotNull('og.recorded_by')
+            ->whereRaw("TRIM(og.recorded_by) <> ''")
+            ->whereRaw('LOWER(TRIM(og.recorded_by)) <> ?', ['stock opname'])
+            ->selectRaw('TRIM(og.recorded_by) AS name, s.store_id, st.store_name')
+            ->groupByRaw('TRIM(og.recorded_by), s.store_id, st.store_name')
+            ->orderByRaw('LOWER(TRIM(og.recorded_by))')
+            ->orderBy('st.store_name')
+            ->get();
+    }
+
+    private function cashDenominations(): array
+    {
+        return [
+            'note_100000' => ['label' => 'Rp 100.000', 'value' => 100000, 'kind' => 'Uang kertas'],
+            'note_50000' => ['label' => 'Rp 50.000', 'value' => 50000, 'kind' => 'Uang kertas'],
+            'note_20000' => ['label' => 'Rp 20.000', 'value' => 20000, 'kind' => 'Uang kertas'],
+            'note_10000' => ['label' => 'Rp 10.000', 'value' => 10000, 'kind' => 'Uang kertas'],
+            'note_5000' => ['label' => 'Rp 5.000', 'value' => 5000, 'kind' => 'Uang kertas'],
+            'note_2000' => ['label' => 'Rp 2.000', 'value' => 2000, 'kind' => 'Uang kertas'],
+            'note_1000' => ['label' => 'Rp 1.000', 'value' => 1000, 'kind' => 'Uang kertas'],
+            'coin_1000' => ['label' => 'Rp 1.000', 'value' => 1000, 'kind' => 'Uang logam'],
+            'coin_500' => ['label' => 'Rp 500', 'value' => 500, 'kind' => 'Uang logam'],
+            'coin_200' => ['label' => 'Rp 200', 'value' => 200, 'kind' => 'Uang logam'],
+            'coin_100' => ['label' => 'Rp 100', 'value' => 100, 'kind' => 'Uang logam'],
+        ];
     }
 }

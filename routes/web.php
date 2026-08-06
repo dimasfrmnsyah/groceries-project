@@ -246,6 +246,7 @@ Route::get('/sync/manual', [SyncController::class, 'manual'])->name('sync.manual
         Route::post('/supplier-debts/{id}/pay', [AccountingController::class, 'paySupplierDebt'])->name('supplier-debts.pay');
         Route::get('/cash-opname', [AccountingController::class, 'cashOpname'])->name('cash-opname.index');
         Route::get('/cash-opname/create', [AccountingController::class, 'createCashOpname'])->name('cash-opname.create');
+        Route::get('/cash-opname/turnover', [AccountingController::class, 'cashOpnameTurnover'])->name('cash-opname.turnover');
         Route::post('/cash-opname', [AccountingController::class, 'storeCashOpname'])->name('cash-opname.store');
         Route::get('/cash-opname/{id}/edit', [AccountingController::class, 'editCashOpname'])->name('cash-opname.edit');
         Route::put('/cash-opname/{id}', [AccountingController::class, 'updateCashOpname'])->name('cash-opname.update');

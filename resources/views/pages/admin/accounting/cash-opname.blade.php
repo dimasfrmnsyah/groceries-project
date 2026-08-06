@@ -43,13 +43,19 @@
     <div class="card-body">
         <div class="table-responsive">
             <table class="table table-bordered table-striped align-middle">
-                <thead><tr><th>Tanggal</th><th>Toko</th><th class="text-end">Nominal</th><th>Keterangan</th><th style="width: 140px;">Aksi</th></tr></thead>
+                <thead><tr><th>Waktu Audit</th><th>Toko</th><th>Kasir</th><th class="text-end">Omzet</th><th class="text-end">Fisik</th><th class="text-end">Selisih</th><th>Keterangan</th><th style="width: 140px;">Aksi</th></tr></thead>
                 <tbody>
                     @forelse($rows as $row)
                         <tr>
-                            <td>{{ $row->date }}</td>
+                            <td>{{ $row->audited_at ? \Carbon\Carbon::parse($row->audited_at)->format('d M Y H:i') : $row->date }}</td>
                             <td>{{ $row->store_name ?? '-' }}</td>
-                            <td class="text-end">{{ number_format($row->nominal, 0, ',', '.') }}</td>
+                            <td>{{ $row->cashier_name ?? '-' }}</td>
+                            <td class="text-end">Rp {{ number_format($row->running_turnover, 0, ',', '.') }}</td>
+                            <td class="text-end">Rp {{ number_format($row->nominal, 0, ',', '.') }}</td>
+                            <td class="text-end fw-semibold {{ $row->difference < 0 ? 'text-danger' : ($row->difference > 0 ? 'text-success' : 'text-muted') }}">
+                                {{ $row->difference > 0 ? '+' : ($row->difference < 0 ? '−' : '') }} Rp {{ number_format(abs($row->difference), 0, ',', '.') }}
+                                <div class="small fw-normal">{{ $row->difference > 0 ? 'Lebih' : ($row->difference < 0 ? 'Kurang' : 'Seimbang') }}</div>
+                            </td>
                             <td>{{ $row->description ?? '-' }}</td>
                             <td>
                                 <div class="d-flex gap-1">
@@ -63,13 +69,17 @@
                             </td>
                         </tr>
                     @empty
-                        <tr><td colspan="5" class="text-center">Belum ada data.</td></tr>
+                        <tr><td colspan="8" class="text-center">Belum ada data.</td></tr>
                     @endforelse
                 </tbody>
                 <tfoot class="table-light fw-semibold">
                     <tr>
-                        <td colspan="2" class="text-end">Total sesuai filter</td>
-                        <td class="text-end">Rp {{ number_format($totalNominal, 0, ',', '.') }}</td>
+                        <td colspan="3" class="text-end">Total sesuai filter</td>
+                        <td class="text-end">Rp {{ number_format($totals->running_turnover, 0, ',', '.') }}</td>
+                        <td class="text-end">Rp {{ number_format($totals->nominal, 0, ',', '.') }}</td>
+                        <td class="text-end {{ $totals->difference < 0 ? 'text-danger' : ($totals->difference > 0 ? 'text-success' : 'text-muted') }}">
+                            {{ $totals->difference > 0 ? '+' : ($totals->difference < 0 ? '−' : '') }} Rp {{ number_format(abs($totals->difference), 0, ',', '.') }}
+                        </td>
                         <td colspan="2"></td>
                     </tr>
                 </tfoot>
