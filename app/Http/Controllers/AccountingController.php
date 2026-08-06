@@ -649,9 +649,10 @@ class AccountingController extends Controller
         $data = $request->validate([
             'store_id' => 'required|integer|exists:tb_stores,id',
             'cashier_name' => 'required|string|max:255',
-            'audited_at' => 'required|date|before_or_equal:now',
+            'audited_at' => 'required|date',
         ]);
         $this->requireStoreAccess((int) $data['store_id']);
+        $this->ensureCashAuditTime($data['audited_at']);
 
         return response()->json([
             'turnover' => $this->salesTurnover((int) $data['store_id'], $data['cashier_name'], $data['audited_at']),
@@ -822,11 +823,12 @@ class AccountingController extends Controller
         $rules = [
             'store_id' => 'required|integer|exists:tb_stores,id',
             'cashier_name' => 'required|string|max:255',
-            'audited_at' => 'required|date|before_or_equal:now',
+            'audited_at' => 'required|date',
             'denominations_payload' => 'required|json',
             'description' => 'nullable|string|max:255',
         ];
         $data = $request->validate($rules);
+        $this->ensureCashAuditTime($data['audited_at']);
 
         $submittedCounts = json_decode($data['denominations_payload'], true);
         if (!is_array($submittedCounts)) {
@@ -1087,7 +1089,7 @@ class AccountingController extends Controller
     {
         $storeIds = $this->stores()->pluck('id')->map(fn ($id) => (int) $id)->all();
 
-        return DB::table('tb_outgoing_goods as og')
+        $options = DB::table('tb_outgoing_goods as og')
             ->join('tb_sells as s', 's.id', '=', 'og.sell_id')
             ->leftJoin('tb_stores as st', 'st.id', '=', 's.store_id')
             ->whereIn('s.store_id', $storeIds)
@@ -1100,6 +1102,35 @@ class AccountingController extends Controller
             ->orderBy('name')
             ->orderBy('st.store_name')
             ->get();
+
+        $today = now('Asia/Jakarta')->toDateString();
+        $latestByStore = DB::table('tb_outgoing_goods as og')
+            ->join('tb_sells as s', 's.id', '=', 'og.sell_id')
+            ->whereIn('s.store_id', $storeIds)
+            ->whereDate('og.created_at', $today)
+            ->whereNotNull('og.recorded_by')
+            ->whereRaw("TRIM(og.recorded_by) <> ''")
+            ->whereRaw('LOWER(TRIM(og.recorded_by)) <> ?', ['stock opname'])
+            ->orderByDesc('og.created_at')
+            ->get(['s.store_id', 'og.recorded_by'])
+            ->unique('store_id')
+            ->keyBy('store_id');
+
+        return $options->map(function ($option) use ($latestByStore) {
+            $latest = $latestByStore->get($option->store_id);
+            $option->is_current = $latest && strcasecmp(trim($latest->recorded_by), trim($option->name)) === 0;
+            return $option;
+        });
+    }
+
+    private function ensureCashAuditTime(string $value): void
+    {
+        $auditTime = \Carbon\Carbon::parse($value, 'Asia/Jakarta');
+        if ($auditTime->greaterThan(now('Asia/Jakarta'))) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'audited_at' => 'Waktu audit tidak boleh melebihi waktu sekarang (WIB).',
+            ]);
+        }
     }
 
     private function cashDenominations(): array

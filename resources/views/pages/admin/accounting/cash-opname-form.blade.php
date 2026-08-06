@@ -59,6 +59,7 @@
                             <option value="{{ $cashier->store_id }}::{{ $cashier->name }}"
                                     data-store-id="{{ $cashier->store_id }}"
                                     data-cashier-name="{{ $cashier->name }}"
+                                    data-current="{{ $cashier->is_current ? '1' : '0' }}"
                                     @selected(old('cashier_name', $row->cashier_name ?? '') === $cashier->name && (int) old('store_id', $row->store_id ?? 0) === (int) $cashier->store_id)>
                                 {{ $cashier->name }} — {{ $cashier->store_name ?? 'Toko tidak diketahui' }}
                             </option>
@@ -171,6 +172,14 @@ document.addEventListener('DOMContentLoaded', function () {
             cashier.value = '';
             cashierName.value = '';
             if (window.jQuery && jQuery.fn.select2) jQuery(cashier).trigger('change.select2');
+        }
+        if (!cashier.value && selectedStore) {
+            const current = Array.from(cashier.options).find(option => option.dataset.storeId === selectedStore && option.dataset.current === '1');
+            if (current) {
+                cashier.value = current.value;
+                cashierName.value = current.dataset.cashierName || '';
+                if (window.jQuery && jQuery.fn.select2) jQuery(cashier).trigger('change.select2');
+            }
         }
     }
 
