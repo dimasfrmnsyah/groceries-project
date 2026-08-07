@@ -130,11 +130,8 @@ Route::get('/sync/manual', [SyncController::class, 'manual'])->name('sync.manual
         Route::get('/', [TbPurchaseController::class, 'index'])->name('purchase.index');
         Route::get('/create', [TbPurchaseController::class, 'create'])->name('purchase.create');
         Route::get('/edit/{id}', [TbPurchaseController::class, 'edit'])->name('purchase.edit');
-        Route::get('/store', [TbPurchaseController::class, 'store'])->name('purchase.store');
-        Route::post('/store', [TbPurchaseController::class, 'store'])->name('purchase.store'); // Pastikan ini ada
-        Route::get('/update/{id}', [TbPurchaseController::class, 'update'])->name('purchase.update');
+        Route::post('/store', [TbPurchaseController::class, 'store'])->name('purchase.store');
         Route::put('/update/{id}', [TbPurchaseController::class, 'update'])->name('purchase.update');
-        Route::get('/delete/{id}', [TbPurchaseController::class, 'delete'])->name('purchase.delete');
     });
 
     Route::prefix('sell')->group(function () {
@@ -150,7 +147,7 @@ Route::get('/sync/manual', [SyncController::class, 'manual'])->name('sync.manual
         Route::get('/edit/{id}', [TbStoresController::class, 'edit'])->name('store.edit');
         Route::post('/store', [TbStoresController::class, 'store'])->name('store.store');
         Route::put('/update/{id}', [TbStoresController::class, 'update'])->name('store.update');
-        Route::delete('/delete/{id}', [TbStoresController::class, 'delete'])->name('store.delete');
+        Route::delete('/delete/{id}', [TbStoresController::class, 'destroy'])->name('store.delete');
         Route::post('/{id}/toggle-online', [TbStoresController::class, 'toggleOnline'])->name('store.toggle_online');
     });
 
@@ -166,7 +163,7 @@ Route::get('/sync/manual', [SyncController::class, 'manual'])->name('sync.manual
     Route::prefix('inventory')->group(function () {
         Route::get('/', [InventoryController::class, 'index'])->name('inventory.index');
         Route::post('/adjust-stock', [InventoryController::class, 'adjustStock'])->name('inventory.adjustStock');
-        Route::post('/adjust-stock-bulk', [InventoryController::class, 'adjustStockBulk'])->name('inventory.adjustStockBulk');
+        Route::post('/adjust-stock-bulk', [InventoryController::class, 'adjustStockBulkV3'])->name('inventory.adjustStockBulk');
         Route::post('/adjust-stock-bulk-v3', [InventoryController::class, 'adjustStockBulkV3'])
             ->name('inventory.adjustStockBulkV3');
         Route::post('/adjust-stock-preview', [InventoryController::class, 'adjustStockPreview'])

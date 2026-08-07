@@ -14,10 +14,23 @@ class SyncController extends Controller
         abort_unless(config('sync.enabled', false), 404);
     }
 
+    protected function ensureSyncAuthorized(Request $req): void
+    {
+        $this->ensureSyncEnabled();
+        $configuredKey = trim((string) config('sync.api_key', ''));
+        $providedKey = trim((string) ($req->header('X-Sync-Api-Key') ?: $req->header('X-Api-Key') ?: ''));
+
+        abort_unless(
+            $configuredKey !== '' && $providedKey !== '' && hash_equals($configuredKey, $providedKey),
+            401,
+            'Sync API key tidak valid atau belum dikonfigurasi.'
+        );
+    }
+
     // ========= FULL EXPORT: dump semua baris per tabel (paginated) =========
     public function export(Request $req)
     {
-        $this->ensureSyncEnabled();
+        $this->ensureSyncAuthorized($req);
 
         $tables = array_values(array_filter(array_map('trim', explode(',', (string) $req->query('tables', '')))));
         $limit  = max(1, min((int) $req->query('limit', 5000), 20000));
@@ -61,7 +74,7 @@ class SyncController extends Controller
     // ========= PULL: baca change log; jika tak ada action/op → asumsikan upsert =========
     public function pull(Request $req)
     {
-        $this->ensureSyncEnabled();
+        $this->ensureSyncAuthorized($req);
 
         $since  = $req->query('since');
         $cursor = (int) $req->query('cursor', 0);
@@ -131,7 +144,7 @@ class SyncController extends Controller
     // ========= PUSH: upsert/delete; CATAT LOG TANPA kolom action/op =========
     public function push(Request $req)
     {
-        $this->ensureSyncEnabled();
+        $this->ensureSyncAuthorized($req);
 
         $deviceId = $req->header('X-Device-Id');
         $ops = $req->input('operations', []);

@@ -34,27 +34,44 @@ class StockTransferController extends Controller
 
     public function store(Request $request)
     {
+        $user = $request->user();
+        $role = strtolower((string) ($user?->roles ?? ''));
+        abort_unless(
+            in_array($role, ['superadmin', 'admin'], true),
+            403,
+            'Hanya admin atau superadmin yang boleh melakukan transfer stok.'
+        );
+
         $data = $request->validate([
             'date' => 'required|date',
             'product_id' => 'required|integer|exists:tb_products,id',
             'from_store_id' => 'required|integer|different:to_store_id|exists:tb_stores,id',
             'to_store_id' => 'required|integer|exists:tb_stores,id',
-            'quantity' => 'required|integer|min:1',
+            'quantity' => 'required|integer|min:1|max:10000',
             'description' => 'nullable|string|max:255',
         ]);
 
-        $user = $request->user();
         $allowedStores = store_access_ids($user);
-        if (!empty($allowedStores) && (!in_array((int) $data['from_store_id'], $allowedStores, true) || !in_array((int) $data['to_store_id'], $allowedStores, true))) {
-            return back()->with('error', 'Toko tidak ada dalam akses user.');
+        if ($role !== 'superadmin' && (
+            empty($allowedStores)
+            || !in_array((int) $data['from_store_id'], $allowedStores, true)
+            || !in_array((int) $data['to_store_id'], $allowedStores, true)
+        )) {
+            abort(403, 'Toko tidak ada dalam akses user.');
         }
 
-        $stock = $this->currentStock((int) $data['from_store_id'], (int) $data['product_id']);
-        if ($stock < (int) $data['quantity']) {
-            return back()->with('error', 'Stok toko asal tidak cukup. Stok tersedia: '.$stock);
-        }
+        try {
+            DB::transaction(function () use ($data, $user) {
+            DB::table('tb_stores')
+                ->whereIn('id', [(int) $data['from_store_id'], (int) $data['to_store_id']])
+                ->lockForUpdate()
+                ->get();
 
-        DB::transaction(function () use ($data, $user) {
+            $stock = $this->currentStock((int) $data['from_store_id'], (int) $data['product_id']);
+            if ($stock < (int) $data['quantity']) {
+                throw new \InvalidArgumentException('Stok toko asal tidak cukup. Stok tersedia: '.$stock);
+            }
+
             $product = tb_products::findOrFail($data['product_id']);
             $date = $data['date'];
             $qty = (int) $data['quantity'];
@@ -62,6 +79,7 @@ class StockTransferController extends Controller
             $sell = tb_sell::create([
                 'no_invoice' => 'TRF-OUT-'.now('Asia/Jakarta')->format('YmdHis'),
                 'store_id' => $data['from_store_id'],
+                'created_by' => $user?->id,
                 'date' => $date,
                 'total_price' => 0,
                 'payment_amount' => 0,
@@ -75,6 +93,8 @@ class StockTransferController extends Controller
                 'quantity_out' => $qty,
                 'discount' => 0,
                 'recorded_by' => $user?->name ?? 'system',
+                'created_by' => $user?->id,
+                'source_type' => 'stock_transfer',
                 'description' => 'Transfer stok ke toko ID '.$data['to_store_id'],
             ];
             if (Schema::hasColumn('tb_outgoing_goods', 'store_id')) $outPayload['store_id'] = $data['from_store_id'];
@@ -92,6 +112,8 @@ class StockTransferController extends Controller
                 'purchase_id' => $purchase->id,
                 'product_id' => $product->id,
                 'stock' => $qty,
+                'created_by' => $user?->id,
+                'source_type' => 'stock_transfer',
                 'description' => 'Transfer stok dari toko ID '.$data['from_store_id'],
             ];
             if (Schema::hasColumn('tb_incoming_goods', 'store_id')) $inPayload['store_id'] = $data['to_store_id'];
@@ -111,7 +133,13 @@ class StockTransferController extends Controller
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
-        });
+            });
+        } catch (\InvalidArgumentException $e) {
+            return back()->with('error', $e->getMessage());
+        } catch (\Throwable $e) {
+            report($e);
+            return back()->with('error', 'Transfer stok gagal disimpan.');
+        }
 
         return back()->with('success', 'Transfer stok berhasil disimpan.');
     }

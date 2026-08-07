@@ -317,6 +317,7 @@ class AccountingController extends Controller
 
     public function createReceivable()
     {
+        $this->authorizeStockMovementManager();
         return view('pages.admin.accounting.receivable-form', $this->formData([
             'customers' => tb_customers::orderBy('customer_name')->get(),
             'products' => tb_products::orderBy('product_name')->get(),
@@ -327,30 +328,35 @@ class AccountingController extends Controller
 
     public function storeReceivable(Request $request)
     {
+        $this->authorizeStockMovementManager();
         $entries = $this->validateReceivableEntries($request);
 
-        $requestedStock = [];
-        foreach ($entries as $index => $entry) {
-            $key = $entry['store_id'].':'.$entry['product_id'];
-            $requestedStock[$key]['quantity'] = ($requestedStock[$key]['quantity'] ?? 0) + (int) $entry['quantity'];
-            $requestedStock[$key]['store_id'] = (int) $entry['store_id'];
-            $requestedStock[$key]['product_id'] = (int) $entry['product_id'];
-            $requestedStock[$key]['indexes'][] = $index;
-        }
-        foreach ($requestedStock as $requestGroup) {
-            $stock = $this->currentStock($requestGroup['store_id'], $requestGroup['product_id']);
-            if ($stock < $requestGroup['quantity']) {
-                return back()->withInput()->withErrors([
-                    'entries.'.$requestGroup['indexes'][0].'.quantity' => 'Total qty untuk produk ini melebihi stok. Tersedia: '.$stock.', diminta: '.$requestGroup['quantity'].'.',
-                ]);
-            }
-        }
-
         DB::transaction(function () use ($entries) {
+            $storeIds = collect($entries)->pluck('store_id')->map(fn ($id) => (int) $id)->unique()->values();
+            DB::table('tb_stores')->whereIn('id', $storeIds->all())->lockForUpdate()->get();
+
+            $requestedStock = [];
+            foreach ($entries as $index => $entry) {
+                $key = $entry['store_id'].':'.$entry['product_id'];
+                $requestedStock[$key]['quantity'] = ($requestedStock[$key]['quantity'] ?? 0) + (int) $entry['quantity'];
+                $requestedStock[$key]['store_id'] = (int) $entry['store_id'];
+                $requestedStock[$key]['product_id'] = (int) $entry['product_id'];
+                $requestedStock[$key]['indexes'][] = $index;
+            }
+            foreach ($requestedStock as $requestGroup) {
+                $stock = $this->currentStock($requestGroup['store_id'], $requestGroup['product_id']);
+                if ($stock < $requestGroup['quantity']) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'entries.'.$requestGroup['indexes'][0].'.quantity' => 'Total qty untuk produk ini melebihi stok. Tersedia: '.$stock.', diminta: '.$requestGroup['quantity'].'.',
+                    ]);
+                }
+            }
+
             foreach ($entries as $index => $entry) {
                 $sell = tb_sell::create([
                     'no_invoice' => 'AR-'.now('Asia/Jakarta')->format('YmdHis').'-'.str_pad((string) ($index + 1), 3, '0', STR_PAD_LEFT),
                     'store_id' => $entry['store_id'],
+                    'created_by' => auth()->id(),
                     'date' => $entry['date'],
                     'total_price' => 0,
                     'payment_amount' => 0,
@@ -380,68 +386,17 @@ class AccountingController extends Controller
 
     public function editReceivable(int $id)
     {
-        return view('pages.admin.accounting.receivable-form', $this->formData([
-            'customers' => tb_customers::orderBy('customer_name')->get(),
-            'products' => tb_products::orderBy('product_name')->get(),
-            'mode' => 'edit',
-            'row' => $this->findScopedRow('tb_customer_receivables', $id),
-        ]));
+        abort(403, 'Piutang yang sudah tersimpan tidak dapat diedit karena merupakan movement stok.');
     }
 
     public function updateReceivable(Request $request, int $id)
     {
-        $row = $this->findScopedRow('tb_customer_receivables', $id);
-        $data = $this->validateReceivableData($request);
-        $sameStockItem = (int) $row->store_id === (int) $data['store_id'] && (int) $row->product_id === (int) $data['product_id'];
-        $available = $this->currentStock((int) $data['store_id'], (int) $data['product_id']) + ($sameStockItem ? (int) $row->quantity : 0);
-
-        if ($available < (int) $data['quantity']) {
-            return back()->withInput()->with('error', 'Stok tidak cukup. Stok tersedia: '.$available);
-        }
-
-        DB::transaction(function () use ($row, $data) {
-            if ($row->sell_id) {
-                tb_sell::where('id', $row->sell_id)->update([
-                    'store_id' => $data['store_id'],
-                    'date' => $data['date'],
-                    'customer_id' => $data['customer_id'] ?? 0,
-                    'updated_at' => now(),
-                ]);
-                tb_outgoing_goods::where('sell_id', $row->sell_id)->update($this->receivableOutgoingPayload($data, (int) $row->sell_id));
-            }
-
-            $paidAmount = min((float) $row->paid_amount, (float) $data['amount']);
-            $status = $paidAmount <= 0 ? 'open' : ($paidAmount >= (float) $data['amount'] ? 'paid' : 'partial');
-
-            DB::table('tb_customer_receivables')->where('id', $row->id)->update($this->withUpdateTimestamp([
-                'date' => $data['date'],
-                'store_id' => $data['store_id'],
-                'customer_id' => $data['customer_id'] ?? null,
-                'product_id' => $data['product_id'],
-                'quantity' => $data['quantity'],
-                'amount' => $data['amount'],
-                'paid_amount' => $paidAmount,
-                'status' => $status,
-                'description' => $data['description'] ?? null,
-            ]));
-        });
-
-        return redirect()->route('accounting.receivables.index', ['store' => $data['store_id']])->with('success', 'Piutang berhasil diupdate.');
+        abort(403, 'Piutang yang sudah tersimpan tidak dapat diubah. Buat koreksi melalui stock opname.');
     }
 
     public function destroyReceivable(int $id)
     {
-        $row = $this->findScopedRow('tb_customer_receivables', $id);
-        DB::transaction(function () use ($row) {
-            $this->deleteLedger('receivable_payment', (int) $row->id);
-            if ($row->sell_id) {
-                tb_outgoing_goods::where('sell_id', $row->sell_id)->delete();
-                tb_sell::where('id', $row->sell_id)->delete();
-            }
-            DB::table('tb_customer_receivables')->where('id', $row->id)->delete();
-        });
-
-        return back()->with('success', 'Piutang berhasil dihapus dan stok dikembalikan.');
+        abort(403, 'Piutang tidak dapat dihapus karena merupakan bagian dari ledger stok.');
     }
 
     public function showReceivablePayment(int $id)
@@ -875,6 +830,8 @@ class AccountingController extends Controller
             'quantity_out' => $data['quantity'],
             'discount' => 0,
             'recorded_by' => auth()->user()?->name ?? 'system',
+            'created_by' => auth()->id(),
+            'source_type' => 'receivable',
             'description' => 'Piutang pelanggan',
             'updated_at' => now(),
         ];
@@ -967,6 +924,16 @@ class AccountingController extends Controller
         if (!in_array($storeId, $allowed, true)) {
             abort(403, 'Toko tidak ada dalam akses user.');
         }
+    }
+
+    private function authorizeStockMovementManager(): void
+    {
+        $role = strtolower((string) (auth()->user()?->roles ?? ''));
+        abort_unless(
+            in_array($role, ['superadmin', 'admin'], true),
+            403,
+            'Hanya admin atau superadmin yang boleh membuat movement stok non-kasir.'
+        );
     }
 
     private function withAudit(array $data): array

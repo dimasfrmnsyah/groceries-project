@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\tb_customers;
 use App\Models\tb_outgoing_goods;
+use App\Models\tb_products;
 use App\Models\tb_sell;
 use App\Models\tb_stores;
 use App\Models\User;
@@ -12,6 +13,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
+use Illuminate\Database\QueryException;
 
 class TbSalesController extends Controller
 {
@@ -55,13 +58,15 @@ class TbSalesController extends Controller
 
     public function store(Request $request)
     {
-        $validator = Validator::make($request->data, [
-            'transaction_date' => 'required',
-            'customer_money' => 'required',
-            'customer_id' => 'nullable',
+        $input = $request->input('data', []);
+        $validator = Validator::make($input, [
+            'transaction_date' => 'required|date',
+            'customer_money' => 'required|numeric|min:0',
+            'customer_id' => 'nullable|integer',
+            'idempotency_key' => 'nullable|string|max:64',
             'products' => 'required|array|min:1',
             'products.*.id' => 'required|integer|exists:tb_products,id',
-            'products.*.qty' => 'required|integer|min:1',
+            'products.*.qty' => 'required|integer|min:1|max:100000',
         ]);
 
         if($validator->fails()) {
@@ -74,78 +79,133 @@ class TbSalesController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Store wajib dipilih.'
-            ], 422);
+                ], 422);
         }
 
-        $requestedQtyByProduct = collect($request->data['products'])
+        $idempotencyKey = trim((string) ($input['idempotency_key'] ?? ''));
+        if ($idempotencyKey === '') {
+            $idempotencyKey = (string) Str::uuid();
+        }
+
+        $existing = tb_sell::where('idempotency_key', $idempotencyKey)->first();
+        if ($existing) {
+            return response()->json([
+                'success' => true,
+                'duplicate' => true,
+                'message' => 'Transaksi sudah diproses sebelumnya.',
+                'sell_id' => $existing->id,
+                'invoice' => $existing->no_invoice,
+            ]);
+        }
+
+        $requestedQtyByProduct = collect($input['products'])
             ->groupBy('id')
             ->map(function ($items) {
                 return $items->sum(fn ($item) => (int) ($item['qty'] ?? 0));
             });
 
-        $availableStock = $this->currentStockByProductIds($store_id, $requestedQtyByProduct->keys()->all());
-        $productNames = DB::table('tb_products')
-            ->whereIn('id', $requestedQtyByProduct->keys()->all())
-            ->pluck('product_name', 'id');
-
-        foreach ($requestedQtyByProduct as $productId => $qty) {
-            $stock = (int) ($availableStock[$productId] ?? 0);
-            if ($qty > $stock) {
-                $productName = $productNames[$productId] ?? 'Produk';
-                return response()->json([
-                    'success' => false,
-                    'message' => "Stok {$productName} hanya {$stock}. Qty tidak boleh lebih dari {$stock}."
-                ], 422);
-            }
-        }
-
-        DB::beginTransaction();
         try {
-            $storeOnline = (int) tb_stores::where('id', $store_id)->value('is_online') === 1;
-            $isPendingStock = $storeOnline ? 0 : 1;
-            $hasOutgoingStore = Schema::hasColumn('tb_outgoing_goods', 'store_id');
-            $hasPendingStock = Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock');
-
-            $sell = tb_sell::create([
-                'no_invoice' => $request->data['no_invoice'],
-                'store_id' => $store_id,
-                'date' => $request->data['transaction_date'],
-                'total_price' => $request->data['total_price'],
-                'payment_amount' => $request->data['customer_money'],
-                'customer_id' => $request->data['customer_id'] ?? 0
-
-            ]);
-
-            foreach($request->data['products'] as $product) {
-                $payload = [
-                    'product_id' => $product['id'],
-                    'sell_id' => $sell->id,
-                    'date' => $request->data['transaction_date'],
-                    'quantity_out' => $product['qty'],
-                    'discount' => $product['discount'],
-                    'recorded_by' => $user->name,
-                    // 'description' => $product['description']
-                ];
-                if ($hasPendingStock) {
-                    $payload['is_pending_stock'] = $isPendingStock;
+            $sell = DB::transaction(function () use ($input, $user, $store_id, $idempotencyKey, $requestedQtyByProduct) {
+                // Semua movement toko dikunci pada baris toko yang sama. Ini membuat dua
+                // kasir tidak dapat membaca saldo yang sama lalu menjual stok yang sama.
+                $store = tb_stores::where('id', $store_id)->lockForUpdate()->firstOrFail();
+                $productIds = $requestedQtyByProduct->keys()->map(fn ($id) => (int) $id)->all();
+                $products = tb_products::with('storePrices')->whereIn('id', $productIds)->get()->keyBy('id');
+                $availableStock = $this->currentStockByProductIds($store_id, $productIds);
+                $customerId = (int) ($input['customer_id'] ?? 0);
+                if ($customerId > 0 && !tb_customers::where('id', $customerId)->where('store_id', $store_id)->exists()) {
+                    throw new \InvalidArgumentException('Customer tidak valid untuk toko ini.');
                 }
-                if ($hasOutgoingStore) {
-                    $payload['store_id'] = $store_id;
+
+                foreach ($requestedQtyByProduct as $productId => $qty) {
+                    $stock = (int) ($availableStock[$productId] ?? 0);
+                    if ($stock < 0 || $qty > $stock) {
+                        $productName = $products[$productId]->product_name ?? 'Produk';
+                        throw new \InvalidArgumentException(
+                            "Stok {$productName} hanya {$stock}. Qty tidak boleh lebih dari stok tersedia."
+                        );
+                    }
                 }
-                tb_outgoing_goods::create($payload);
-            }
-            AccountingController::postSalesLedger($sell->id);
-            DB::commit();
+
+                $totalPrice = 0.0;
+                foreach ($requestedQtyByProduct as $productId => $qty) {
+                    $product = $products[$productId] ?? null;
+                    if (!$product) {
+                        throw new \InvalidArgumentException('Produk tidak ditemukan.');
+                    }
+                    $totalPrice += $this->resolveSellingPrice($product, $store_id, (int) $qty) * (int) $qty;
+                }
+
+                $paymentAmount = (float) ($input['customer_money'] ?? 0);
+                if ($paymentAmount < $totalPrice) {
+                    throw new \InvalidArgumentException('Uang pembayaran kurang dari total transaksi.');
+                }
+
+                $sell = tb_sell::create([
+                    'no_invoice' => 'INV-'.now('Asia/Jakarta')->format('YmdHisv').'-'.Str::upper(Str::random(6)),
+                    'store_id' => $store_id,
+                    'created_by' => $user->id,
+                    'idempotency_key' => $idempotencyKey,
+                    'date' => $input['transaction_date'],
+                    'total_price' => $totalPrice,
+                    'payment_amount' => $paymentAmount,
+                    'customer_id' => $customerId,
+                ]);
+
+                foreach ($requestedQtyByProduct as $productId => $qty) {
+                    $payload = [
+                        'product_id' => (int) $productId,
+                        'sell_id' => $sell->id,
+                        'date' => $input['transaction_date'],
+                        'quantity_out' => (int) $qty,
+                        // Diskon dari browser tidak dipercaya. Diskon produk/tier dihitung server.
+                        'discount' => 0,
+                        'recorded_by' => $user->name,
+                        'created_by' => $user->id,
+                        'source_type' => 'sale',
+                        // Penjualan selalu mengurangi stok. Status toko tidak boleh menjadi bypass.
+                        'is_pending_stock' => 0,
+                    ];
+                    if (Schema::hasColumn('tb_outgoing_goods', 'store_id')) {
+                        $payload['store_id'] = $store_id;
+                    }
+                    tb_outgoing_goods::create($payload);
+                }
+
+                AccountingController::postSalesLedger($sell->id);
+                return $sell;
+            }, 3);
+
             return response()->json([
                 'success' => true,
-                'message' => 'Data berhasil di proses'
+                'message' => 'Data berhasil diproses',
+                'sell_id' => $sell->id,
+                'invoice' => $sell->no_invoice,
             ]);
-        } catch(\Exception $e) {
-            DB::rollBack();
+        } catch (QueryException $e) {
+            // Unique idempotency_key menangani retry/request ganda yang datang bersamaan.
+            $existing = tb_sell::where('idempotency_key', $idempotencyKey)->first();
+            if ($existing) {
+                return response()->json([
+                    'success' => true,
+                    'duplicate' => true,
+                    'message' => 'Transaksi sudah diproses sebelumnya.',
+                    'sell_id' => $existing->id,
+                    'invoice' => $existing->no_invoice,
+                ]);
+            }
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage()
-            ]);
+                'message' => 'Transaksi gagal disimpan.',
+            ], 500);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        } catch (\Throwable $e) {
+            report($e);
+            return response()->json([
+                'success' => false,
+                'message' => 'Transaksi gagal disimpan.',
+            ], 500);
         }
     }
 
@@ -207,7 +267,26 @@ class TbSalesController extends Controller
             ->whereIn('p.id', $productIds)
             ->select('p.id', DB::raw($stockExpression.' as current_stock'))
             ->pluck('current_stock', 'id')
-            ->map(fn ($stock) => max(0, (int) $stock))
+            ->map(fn ($stock) => (int) $stock)
             ->all();
+    }
+
+    private function resolveSellingPrice(tb_products $product, int $storeId, int $qty): float
+    {
+        $pricing = $product->priceForStore($storeId);
+        $base = (float) ($pricing['selling_price'] ?? 0);
+        $productDiscount = (float) ($pricing['product_discount'] ?? 0);
+        $unitPrice = max(0, $base - $productDiscount);
+
+        $tiers = collect($pricing['tier_prices'] ?? [])
+            ->mapWithKeys(fn ($price, $minQty) => [(int) $minQty => (float) $price])
+            ->sortKeys();
+        foreach ($tiers as $minQty => $tierPrice) {
+            if ($qty >= $minQty) {
+                $unitPrice = max(0, (float) $tierPrice);
+            }
+        }
+
+        return $unitPrice;
     }
 }

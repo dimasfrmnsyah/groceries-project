@@ -60,18 +60,7 @@
 
     @if($storeId)
     <div class="mb-3 d-flex flex-wrap gap-2 align-items-center">
-        <form method="POST" action="{{ route('inventory.normalizeNegativeStock') }}"
-              data-csrf-refresh="1"
-              onsubmit="return confirm('Normalisasi akan menambahkan stok untuk semua produk yang minus. Lanjutkan?');">
-            @csrf
-            @if(store_access_can_select(Auth::user()))
-                <input type="hidden" name="store_id" value="{{ $storeId }}">
-            @endif
-            <button type="submit" class="btn btn-warning">
-                Normalisasi Stok Minus
-            </button>
-        </form>
-        <span class="text-muted small">Gunakan jika stok sistem sudah negatif.</span>
+        <span class="text-muted small">Stok minus harus diperiksa melalui audit dan stock opname manual. Normalisasi otomatis dinonaktifkan.</span>
     </div>
     @endif
 
@@ -140,7 +129,7 @@
                             @endphp
                             <input type="number" name="physical_quantity[]"
                                    value="{{ $physicalValue }}"
-                                   min="0" max="1000000" step="1" inputmode="numeric"
+                                   min="0" max="10000" step="1" inputmode="numeric"
                                    class="form-control physical-qty" required>
                         </td>
 
@@ -359,7 +348,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // KIRIM JSON ke endpoint preview (hanya item berubah)
-        const MAX_QTY = 1000000;
+        const MAX_QTY = 10000;
         const items = [];
         let invalidRow = null;
         table.querySelectorAll('tbody tr').forEach(tr => {
@@ -388,7 +377,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const totalItemsField = form.querySelector('input[name="total_items"]');
         const storeIdValue = storeIdField ? parseInt(storeIdField.value) || 0 : 0;
         const totalItemsValue = totalItemsField ? parseInt(totalItemsField.value) || 0 : 0;
-
         const csrfToken = readCsrfToken();
         const xsrfCookie = document.cookie.match(/XSRF-TOKEN=([^;]+)/);
         const xsrfToken = xsrfCookie ? decodeURIComponent(xsrfCookie[1]) : csrfToken;

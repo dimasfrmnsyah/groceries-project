@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 class tb_incoming_goods extends Model
 {
     use HasFactory,Syncable,SoftDeletes;
-    protected $fillable = ['purchase_id', 'product_id', 'store_id', 'stock', 'description','uuid','is_pending_stock','synced_at'];
+    protected $fillable = ['purchase_id', 'product_id', 'store_id', 'stock', 'description', 'created_by', 'source_type', 'uuid', 'is_pending_stock', 'synced_at'];
 
 
 

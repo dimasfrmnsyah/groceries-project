@@ -25,7 +25,7 @@
                             </button>
                         </li>
                         @endif
-                        @if(!in_array($roleHeader, ['superadmin','admin']))
+                        @if(in_array($roleHeader, ['superadmin','admin'], true) && $userStoreId)
                         <li class="nav-item d-flex align-items-center">
                             <div class="d-flex align-items-center gap-2">
                                 <span class="fw-bold">{{ $userStoreName }}</span>

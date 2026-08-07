@@ -50,12 +50,7 @@ class TbPurchaseController extends Controller
                 return $purchase->creator?->name ?? '-';
             })
             ->addColumn('action', function ($purchases) {
-                return '
-                <div class="d-flex justify-content-center">
-                    <a href="/purchase/edit/'.$purchases->id.'" class="btn btn-sm btn-success me-1">
-                       Edit <i class="bx bx-right-arrow-alt"></i> 
-                    </a>
-                </div>';
+                return '<span class="text-muted">Immutable</span>';
             })
             ->rawColumns(['action'])
             ->make(true);
@@ -68,6 +63,7 @@ class TbPurchaseController extends Controller
      */
     public function create()
     {
+        $this->authorizePurchaseManager();
         $suppliers = tb_suppliers::query()
             ->where('code', '!=', 'SO-ADJ')
             ->orderBy('name')
@@ -82,6 +78,7 @@ class TbPurchaseController extends Controller
     
     public function store(Request $request)
 {
+    $this->authorizePurchaseManager();
     $user = auth()->user();
     $storeId = store_access_resolve_id($request, $user, ['store_id']);
     if (!$storeId) {
@@ -112,10 +109,9 @@ class TbPurchaseController extends Controller
             'total_price' => $totalPrice,
             'created_by' => auth()->id(),
         ]);
-        $storeOnline = (int) tb_stores::where('id', $storeId)->value('is_online') === 1;
-        $isPendingStock = $storeOnline ? 0 : 1;
         $hasIncomingStore = Schema::hasColumn('tb_incoming_goods', 'store_id');
         $hasPendingStock = Schema::hasColumn('tb_incoming_goods', 'is_pending_stock');
+        tb_stores::where('id', $storeId)->lockForUpdate()->firstOrFail();
         
         // Simpan produk ke tb_incoming_goods
         foreach ($validated['products'] as $product) {
@@ -124,9 +120,11 @@ class TbPurchaseController extends Controller
                 'product_id' => $product['product_id'],
                 'stock' => $product['stock'],
                 'description' => $product['description'] ?? null, // Jika null, tetap bisa disimpan
+                'created_by' => $user->id,
+                'source_type' => 'purchase',
             ];
             if ($hasPendingStock) {
-                $payload['is_pending_stock'] = $isPendingStock;
+                $payload['is_pending_stock'] = 0;
             }
             if ($hasIncomingStore) {
                 $payload['store_id'] = $storeId;
@@ -173,16 +171,7 @@ class TbPurchaseController extends Controller
      */
     public function edit($id)
     {
-        $purchase = tb_purchase::with(['incomingGoods.product', 'supplier'])->findOrFail($id);
-
-        $suppliers = tb_suppliers::query()
-            ->where('code', '!=', 'SO-ADJ')
-            ->orderBy('name')
-            ->get();
-        $stores = store_access_list(auth()->user());
-        $products = tb_products::all();
-    
-        return view('pages.admin.purchase.edit', compact('purchase', 'suppliers', 'stores', 'products'));
+        abort(403, 'Pembelian yang sudah tersimpan tidak dapat diedit. Buat movement koreksi melalui stock opname.');
     }
     
 
@@ -191,69 +180,7 @@ class TbPurchaseController extends Controller
      */
     public function update(Request $request, $id)
     {
-        $user = auth()->user();
-        $storeId = store_access_resolve_id($request, $user, ['store_id']);
-        if (!$storeId) {
-            return back()->with('error', 'Store wajib dipilih.');
-        }
-
-        $validated = $request->validate([
-            'supplier_id' => 'required|integer|exists:tb_suppliers,id',
-            'products' => 'required|array|min:1',
-            'products.*.product_id' => 'required|integer|exists:tb_products,id',
-            'products.*.stock' => 'required|integer|min:1',
-            'products.*.description' => 'nullable|string',
-        ]);
-
-        $productPrices = tb_products::whereIn('id', collect($validated['products'])->pluck('product_id')->all())
-            ->pluck('purchase_price', 'id');
-        $totalPrice = collect($validated['products'])->sum(function ($product) use ($productPrices) {
-            return ((float) ($productPrices[$product['product_id']] ?? 0)) * ((int) $product['stock']);
-        });
-
-        DB::beginTransaction();
-        try {
-            // Ambil data pembelian yang ingin diperbarui
-            $purchase = tb_purchase::findOrFail($id);
-    
-            // Update data pembelian
-            $purchase->update([
-                'supplier_id' => $validated['supplier_id'],
-                'store_id' => $storeId,
-                'total_price' => $totalPrice,
-            ]);
-
-            $storeOnline = (int) tb_stores::where('id', $storeId)->value('is_online') === 1;
-            $isPendingStock = $storeOnline ? 0 : 1;
-            $hasIncomingStore = Schema::hasColumn('tb_incoming_goods', 'store_id');
-            $hasPendingStock = Schema::hasColumn('tb_incoming_goods', 'is_pending_stock');
-    
-            // Hapus semua produk lama sebelum menyimpan yang baru
-            tb_incoming_goods::where('purchase_id', $id)->delete();
-    
-            // Simpan produk baru yang diinputkan user
-            foreach ($validated['products'] as $product) {
-                $payload = [
-                    'purchase_id' => $id,
-                    'product_id' => $product['product_id'],
-                    'stock' => $product['stock'],
-                    'description' => $product['description'] ?? null,
-                ];
-                if ($hasPendingStock) {
-                    $payload['is_pending_stock'] = $isPendingStock;
-                }
-                if ($hasIncomingStore) {
-                    $payload['store_id'] = $storeId;
-                }
-                tb_incoming_goods::create($payload);
-            }
-    
-            DB::commit();
-            return redirect()->route('purchase.index')->with('success', 'Pembelian berhasil diperbarui!');
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return back()->with('error', 'Terjadi kesalahan: ' . $e->getMessage());
-        }
+        abort(403, 'Pembelian yang sudah tersimpan tidak dapat diubah. Buat movement koreksi melalui stock opname.');
     }
     
     
@@ -263,20 +190,16 @@ class TbPurchaseController extends Controller
      */
     public function destroy($id)
     {
-        DB::beginTransaction();
-        try {
-            tb_purchase::where('id', $id)->delete();
-            DB::commit();
-            return response()->json([
-                'success' => true,
-                'message' => 'Data berhasil dihapus',
-            ]);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return response()->json([
-                'success' => false,
-                'message' => 'Terjadi kesalahan saat menghapus data',
-            ]);
-        }
+        abort(403, 'Pembelian tidak dapat dihapus karena merupakan bagian dari ledger stok.');
+    }
+
+    private function authorizePurchaseManager(): void
+    {
+        $role = strtolower((string) (auth()->user()?->roles ?? ''));
+        abort_unless(
+            in_array($role, ['superadmin', 'admin'], true),
+            403,
+            'Hanya admin atau superadmin yang boleh membuat pembelian.'
+        );
     }
 }

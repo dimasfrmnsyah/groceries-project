@@ -6,13 +6,15 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use App\Models\tb_stores;
 use App\Models\tb_products;
 use App\Models\tb_stock_opnames;
 
 class InventoryController extends Controller
 {
-    private const MAX_STOCK_OPNAME_QUANTITY = 1000000;
+    // Batas bisnis, bukan batas tipe data. Nilai ekstrem harus melalui audit manual.
+    private const MAX_STOCK_OPNAME_QUANTITY = 10000;
 
     /** Detik. Lock "processing" dianggap basi setelah ini agar request yang mati (timeout) tidak memblok selamanya. */
     private const PROCESSING_LOCK_TTL = 300;
@@ -22,6 +24,7 @@ class InventoryController extends Controller
 
     public function index(Request $request)
     {
+        $this->authorizeInventoryManager($request);
         $user     = auth()->user();
         $role = strtolower((string) ($user->roles ?? ''));
         $storeId  = store_access_resolve_id($request, $user, ['store_id']);
@@ -132,21 +135,13 @@ class InventoryController extends Controller
 
     public function adjustStock(Request $request)
     {
-        $request->validate([
-            'product_name'       => 'required|string',
-            'store_name'         => 'required|string',
-            'physical_quantity'  => 'required|integer|min:0',
-        ]);
+        $this->authorizeInventoryManager($request);
 
-        $product = tb_products::where('product_name', $request->product_name)->firstOrFail();
-        $store   = tb_stores::where('store_name', $request->store_name)->firstOrFail();
-
-        tb_stock_opnames::updateOrCreate(
-            ['product_id' => $product->id, 'store_id' => $store->id],
-            ['physical_quantity' => (int)$request->physical_quantity]
-        );
-
-        return response()->json(['message' => 'Stock opname berhasil disimpan']);
+        // Endpoint lama hanya mengubah snapshot tanpa membuat movement. Menjaganya
+        // aktif akan membuat saldo fisik dan ledger berbeda.
+        return response()->json([
+            'message' => 'Gunakan alur preview dan konfirmasi stock opname.',
+        ], 410);
     }
 
     /**
@@ -155,6 +150,7 @@ class InventoryController extends Controller
      */
     public function adjustStockBulkV3(Request $request)
     {
+        $this->authorizeInventoryManager($request);
         $ver = 'adj-v15-nobuilder';
 
         // Opname seluruh produk toko bisa memproses ribuan baris; beri waktu memadai
@@ -212,6 +208,7 @@ class InventoryController extends Controller
                 }
                 return redirect()->back()->with('error', $message);
             }
+            $this->assertStoreAccess($request, $storeId);
 
             $message = "[$ver] Tidak ada perubahan stok untuk disimpan.";
             $request->session()->forget('inventory.stock_opname_preview');
@@ -235,15 +232,18 @@ class InventoryController extends Controller
             return redirect()->back()->with('error', $message);
         }
         $storeId = (int)$storeIds[0];
+        $this->assertStoreAccess($request, $storeId);
 
         try {
             $userId = auth()->id();
-            DB::transaction(function () use ($items, $userId, $storeId) {
+            $role = strtolower((string) (auth()->user()?->roles ?? ''));
+            DB::transaction(function () use ($items, $userId, $storeId, $role) {
                 $now = now();
 
-                // Saat toko offline, adjustment disimpan pending dan dilepas saat toko online kembali.
-                $storeOnline = (int) DB::table('tb_stores')->where('id', $storeId)->value('is_online') === 1;
-                $isPending = $storeOnline ? 0 : 1;
+                DB::table('tb_stores')->where('id', $storeId)->lockForUpdate()->first();
+
+                // Stock opname adalah movement resmi dan langsung memengaruhi saldo.
+                $isPending = 0;
 
                 $incomingDeletedSql = Schema::hasColumn('tb_incoming_goods', 'deleted_at')
                     ? ' AND ig.deleted_at IS NULL'
@@ -317,7 +317,7 @@ class InventoryController extends Controller
                 // ribuan query dalam satu transaksi -> timeout -> Internal Server Error.
                 $minusItems    = []; // [product_id, qty_out]
                 $plusItems     = []; // [product_id, qty_in]
-                $opnameRows    = []; // [product_id, store_id, physical_quantity, created_at, updated_at]
+                $opnameRows    = []; // snapshot + actor + baseline untuk audit
                 $totalPurchase = 0;
 
                 foreach ($items as $it) {
@@ -326,9 +326,9 @@ class InventoryController extends Controller
                     if ($pid <= 0) continue;
 
                     $system = (int)($incoming[$pid] ?? 0) - (int)($outgoing[$pid] ?? 0);
-                    $this->assertReasonableStockAdjustment($pid, $system, $phys);
+                    $this->assertReasonableStockAdjustment($pid, $system, $phys, $role);
 
-                    $opnameRows[] = [$pid, $storeId, $phys, $now, $now];
+                    $opnameRows[] = [$pid, $storeId, $phys, $system, $userId, $now, $now];
 
                     $minus = max(0, $system - $phys);
                     if ($minus > 0) {
@@ -348,13 +348,13 @@ class InventoryController extends Controller
                 // Penyesuaian minus -> satu nota keluar, insert batch.
                 if (!empty($minusItems)) {
                     DB::insert(
-                        'INSERT INTO tb_sells (`no_invoice`,`store_id`,`date`,`total_price`,`payment_amount`,`created_at`,`updated_at`)
-                         VALUES (?,?,?,?,?,?,?)',
-                        ['SO-ADJ-OUT-'.date('YmdHis'), $storeId, $now, 0, 0, $now, $now]
+                        'INSERT INTO tb_sells (`no_invoice`,`store_id`,`created_by`,`date`,`total_price`,`payment_amount`,`created_at`,`updated_at`)
+                         VALUES (?,?,?,?,?,?,?,?)',
+                        ['SO-ADJ-OUT-'.now()->format('YmdHisv').'-'.Str::upper(Str::random(4)), $storeId, $userId, $now, 0, 0, $now, $now]
                     );
                     $sellId = (int)DB::getPdo()->lastInsertId();
 
-                    $outColumns = ['product_id', 'sell_id', 'date', 'quantity_out', 'discount', 'recorded_by', 'description', 'is_pending_stock'];
+                    $outColumns = ['product_id', 'sell_id', 'date', 'quantity_out', 'discount', 'recorded_by', 'created_by', 'description', 'source_type', 'is_pending_stock'];
                     if ($hasOutgoingStore) {
                         $outColumns[] = 'store_id';
                     }
@@ -362,7 +362,7 @@ class InventoryController extends Controller
 
                     $outRows = [];
                     foreach ($minusItems as [$pid, $minus]) {
-                        $row = [$pid, $sellId, $now, $minus, 0, 'Stock Opname', 'Stock Opname (-)', $isPending];
+                        $row = [$pid, $sellId, $now, $minus, 0, 'Stock Opname', $userId, 'Stock Opname (-)', 'stock_opname', $isPending];
                         if ($hasOutgoingStore) {
                             $row[] = $storeId;
                         }
@@ -382,7 +382,7 @@ class InventoryController extends Controller
                     );
                     $purchaseId = (int)DB::getPdo()->lastInsertId();
 
-                    $inColumns = ['purchase_id', 'product_id', 'stock', 'description', 'is_pending_stock'];
+                    $inColumns = ['purchase_id', 'product_id', 'stock', 'description', 'created_by', 'source_type', 'is_pending_stock'];
                     if ($hasIncomingStore) {
                         $inColumns[] = 'store_id';
                     }
@@ -390,7 +390,7 @@ class InventoryController extends Controller
 
                     $inRows = [];
                     foreach ($plusItems as [$pid, $plus]) {
-                        $row = [$purchaseId, $pid, $plus, 'Stock Opname (+)', $isPending];
+                        $row = [$purchaseId, $pid, $plus, 'Stock Opname (+)', $userId, 'stock_opname', $isPending];
                         if ($hasIncomingStore) {
                             $row[] = $storeId;
                         }
@@ -449,8 +449,8 @@ class InventoryController extends Controller
 
     public function adjustStockPreview(Request $request)
     {
+        $this->authorizeInventoryManager($request);
         $ver = 'adj-v15-nobuilder';
-
         try {
             $items = $this->parseStockItems($request, true);
 
@@ -467,6 +467,7 @@ class InventoryController extends Controller
                     return response()->json(['message' => "[$ver] store_id tidak ditemukan"], 422);
                 }
             }
+            $this->assertStoreAccess($request, $storeId);
 
             $totalItems = (int)$request->input('total_items', 0);
             $summary = $this->buildStockSummary($items, $storeId, $totalItems > 0 ? $totalItems : null);
@@ -503,6 +504,7 @@ class InventoryController extends Controller
 
     public function adjustStockPreviewPage(Request $request)
     {
+        $this->authorizeInventoryManager($request);
         $preview = $request->session()->get('inventory.stock_opname_preview');
         if (!$preview) {
             return redirect()->route('inventory.index');
@@ -528,152 +530,8 @@ class InventoryController extends Controller
 
     public function normalizeNegativeStock(Request $request)
     {
-        $user = $request->user();
-        $storeId = store_access_resolve_id($request, $user, ['store_id']);
-
-        if (!$storeId) {
-            return redirect()->back()->with('error', 'Pilih toko terlebih dahulu.');
-        }
-
-        $storeOnline = (int) DB::table('tb_stores')->where('id', $storeId)->value('is_online') === 1;
-        if (!$storeOnline) {
-            return redirect()->back()->with('error', 'Toko offline. Set online dulu untuk normalisasi stok minus.');
-        }
-
-        $incomingSub = DB::table('tb_incoming_goods as ig')
-            ->join('tb_purchases as p', 'ig.purchase_id', '=', 'p.id')
-            ->where('p.store_id', $storeId)
-            ->when(
-                Schema::hasColumn('tb_incoming_goods', 'deleted_at'),
-                fn ($q) => $q->whereNull('ig.deleted_at')
-            )
-            ->when(
-                Schema::hasColumn('tb_incoming_goods', 'is_pending_stock'),
-                function ($q) {
-                    $q->where(function ($qq) {
-                        $qq->whereNull('ig.is_pending_stock')
-                           ->orWhere('ig.is_pending_stock', 0);
-                    });
-                }
-            )
-            ->select('ig.product_id', DB::raw('SUM(ig.stock) AS total_in'))
-            ->groupBy('ig.product_id');
-
-        $outgoingSub = DB::table('tb_outgoing_goods as og')
-            ->join('tb_sells as sl', 'og.sell_id', '=', 'sl.id')
-            ->where('sl.store_id', $storeId)
-            ->when(
-                Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
-                fn ($q) => $q->whereNull('og.deleted_at')
-            )
-            ->when(
-                Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
-                function ($q) {
-                    $q->where(function ($qq) {
-                        $qq->whereNull('og.is_pending_stock')
-                           ->orWhere('og.is_pending_stock', 0);
-                    });
-                }
-            )
-            ->select('og.product_id', DB::raw('SUM(og.quantity_out) AS total_out'))
-            ->groupBy('og.product_id');
-
-        $negativeRows = DB::table('tb_products as p')
-            ->leftJoinSub($incomingSub, 'incoming', fn ($join) => $join->on('incoming.product_id', '=', 'p.id'))
-            ->leftJoinSub($outgoingSub, 'outgoing', fn ($join) => $join->on('outgoing.product_id', '=', 'p.id'))
-            ->leftJoin('tb_product_store_prices as sp', function ($join) use ($storeId) {
-                $join->on('sp.product_id', '=', 'p.id')
-                     ->where('sp.store_id', '=', $storeId);
-            })
-            ->select(
-                'p.id',
-                DB::raw('COALESCE(incoming.total_in, 0) as total_in'),
-                DB::raw('COALESCE(outgoing.total_out, 0) as total_out'),
-                DB::raw('COALESCE(sp.purchase_price, p.purchase_price) as purchase_price')
-            )
-            ->whereRaw('(COALESCE(incoming.total_in, 0) - COALESCE(outgoing.total_out, 0)) < 0')
-            ->get();
-
-        if ($negativeRows->isEmpty()) {
-            return redirect()
-                ->route('inventory.index', ['store_id' => $storeId])
-                ->with('success', 'Tidak ada stok minus untuk dinormalisasi.');
-        }
-
-        $now = now();
-        DB::transaction(function () use ($negativeRows, $storeId, $now) {
-            $supplier = DB::table('tb_suppliers')->select('id')->where('code', 'SO-ADJ')->first();
-            $supplierId = $supplier ? (int) $supplier->id : null;
-            if (!$supplierId) {
-                DB::table('tb_suppliers')->insert([
-                    'code' => 'SO-ADJ',
-                    'name' => 'Stock Opname Adjustment',
-                    'address' => null,
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ]);
-                $supplierId = (int) DB::getPdo()->lastInsertId();
-            }
-
-            $purchaseId = DB::table('tb_purchases')->insertGetId([
-                'supplier_id' => $supplierId,
-                'store_id' => $storeId,
-                'total_price' => 0,
-                'created_by' => auth()->id(),
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
-
-            $hasIncomingStore = Schema::hasColumn('tb_incoming_goods', 'store_id');
-            $hasPendingStock = Schema::hasColumn('tb_incoming_goods', 'is_pending_stock');
-            $rows = [];
-            $totalPurchase = 0;
-
-            foreach ($negativeRows as $row) {
-                $net = (int) $row->total_in - (int) $row->total_out;
-                if ($net >= 0) {
-                    continue;
-                }
-                $qty = abs($net);
-                $price = (int) ($row->purchase_price ?? 0);
-                $totalPurchase += $qty * $price;
-
-                $payload = [
-                    'purchase_id' => $purchaseId,
-                    'product_id' => (int) $row->id,
-                    'stock' => $qty,
-                    'description' => 'Normalisasi stok minus',
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ];
-                if ($hasPendingStock) {
-                    $payload['is_pending_stock'] = 0;
-                }
-                if ($hasIncomingStore) {
-                    $payload['store_id'] = $storeId;
-                }
-                $rows[] = $payload;
-            }
-
-            if (!empty($rows)) {
-                DB::table('tb_incoming_goods')->insert($rows);
-            }
-
-            DB::table('tb_purchases')->where('id', $purchaseId)->update([
-                'total_price' => $totalPurchase,
-                'updated_at' => $now,
-            ]);
-        });
-
-        $productCount = $negativeRows->count();
-        $totalQty = $negativeRows->sum(function ($row) {
-            $net = (int) $row->total_in - (int) $row->total_out;
-            return $net < 0 ? abs($net) : 0;
-        });
-
-        return redirect()
-            ->route('inventory.index', ['store_id' => $storeId])
-            ->with('success', "Normalisasi selesai: {$productCount} produk, total {$totalQty} unit ditambahkan.");
+        $this->authorizeInventoryManager($request);
+        abort(410, 'Normalisasi otomatis dinonaktifkan. Gunakan stock opname manual.');
     }
 
     private function parseStockItems(Request $request, bool $allowEmpty = false): array
@@ -687,14 +545,14 @@ class InventoryController extends Controller
             if (empty($previewItems)) {
                 return [];
             }
-            return array_values(array_map(function ($row) {
+            return $this->validateStockItems(array_values(array_map(function ($row) {
                 if (is_object($row)) $row = (array)$row;
                 return [
                     'product_id'        => (int)($row['product_id'] ?? 0),
                     'store_id'          => (int)($row['store_id'] ?? 0),
                     'physical_quantity' => $this->normalizePhysicalQuantity($row['physical_quantity'] ?? 0),
                 ];
-            }, $previewItems));
+            }, $previewItems)));
         }
 
         $items = $request->input('items');
@@ -758,14 +616,49 @@ class InventoryController extends Controller
             throw new \InvalidArgumentException('Payload tidak valid (items)');
         }
 
-        return array_values(array_map(function ($row) {
+        return $this->validateStockItems(array_values(array_map(function ($row) {
             if (is_object($row)) $row = (array)$row;
             return [
                 'product_id'        => (int)($row['product_id'] ?? 0),
                 'store_id'          => (int)($row['store_id'] ?? 0),
                 'physical_quantity' => $this->normalizePhysicalQuantity($row['physical_quantity'] ?? 0),
             ];
-        }, $items));
+        }, $items)));
+    }
+
+    private function validateStockItems(array $items): array
+    {
+        $productIds = [];
+        $storeIds = [];
+        $seen = [];
+
+        foreach ($items as $item) {
+            $productId = (int) ($item['product_id'] ?? 0);
+            $storeId = (int) ($item['store_id'] ?? 0);
+            if ($productId <= 0 || $storeId <= 0) {
+                throw new \InvalidArgumentException('Produk atau toko tidak valid.');
+            }
+
+            $key = $storeId.':'.$productId;
+            if (isset($seen[$key])) {
+                throw new \InvalidArgumentException('Produk yang sama tidak boleh dikirim lebih dari satu kali.');
+            }
+            $seen[$key] = true;
+            $productIds[$productId] = true;
+            $storeIds[$storeId] = true;
+        }
+
+        $existingProducts = DB::table('tb_products')->whereIn('id', array_keys($productIds))->count();
+        if ($existingProducts !== count($productIds)) {
+            throw new \InvalidArgumentException('Terdapat produk yang tidak ditemukan.');
+        }
+
+        $existingStores = DB::table('tb_stores')->whereIn('id', array_keys($storeIds))->count();
+        if ($existingStores !== count($storeIds)) {
+            throw new \InvalidArgumentException('Terdapat toko yang tidak ditemukan.');
+        }
+
+        return $items;
     }
 
     private function buildStockSummary(array $items, int $storeId, ?int $totalItemsOverride = null): array
@@ -899,7 +792,13 @@ class InventoryController extends Controller
 
     private function normalizePhysicalQuantity($value): int
     {
-        $quantity = (int) $value;
+        if (is_int($value)) {
+            $quantity = $value;
+        } elseif (is_string($value) && preg_match('/^\d+$/', trim($value))) {
+            $quantity = (int) trim($value);
+        } else {
+            throw new \InvalidArgumentException('Jumlah fisik harus berupa bilangan bulat.');
+        }
         if ($quantity < 0) {
             throw new \InvalidArgumentException('Jumlah fisik tidak boleh negatif');
         }
@@ -910,9 +809,11 @@ class InventoryController extends Controller
         return $quantity;
     }
 
-    private function assertReasonableStockAdjustment(int $productId, int $systemStock, int $physicalQuantity): void
+    private function assertReasonableStockAdjustment(int $productId, int $systemStock, int $physicalQuantity, string $role): void
     {
-        $max = self::MAX_STOCK_OPNAME_QUANTITY;
+        // Selisih ekstrem hanya boleh direkonsiliasi superadmin dan tetap
+        // mencatat actor yang melakukan perubahan di audit stock opname.
+        $max = $role === 'superadmin' ? 1000000 : self::MAX_STOCK_OPNAME_QUANTITY;
         $adjustment = abs($physicalQuantity - $systemStock);
 
         if (abs($systemStock) > $max || $adjustment > $max) {
@@ -949,7 +850,7 @@ class InventoryController extends Controller
     /**
      * Upsert stok fisik secara batch (chunked) dengan ON DUPLICATE KEY UPDATE.
      *
-     * @param array<array{0:int,1:int,2:int,3:mixed,4:mixed}> $rows [product_id, store_id, physical_quantity, created_at, updated_at]
+     * @param array<array{0:int,1:int,2:int,3:int,4:mixed,5:mixed,6:mixed}> $rows
      */
     private function batchUpsertStockOpname(array $rows, int $chunkSize = self::INSERT_CHUNK_SIZE): void
     {
@@ -957,20 +858,50 @@ class InventoryController extends Controller
             return;
         }
 
-        $placeholderRow = '(?,?,?,?,?)';
+        $placeholderRow = '(?,?,?,?,?,?,?)';
 
         foreach (array_chunk($rows, $chunkSize) as $chunk) {
             $placeholders = implode(',', array_fill(0, count($chunk), $placeholderRow));
             $bindings = array_merge(...$chunk);
             DB::statement(
                 'INSERT INTO tb_stock_opnames
-                  (`product_id`,`store_id`,`physical_quantity`,`created_at`,`updated_at`)
+                  (`product_id`,`store_id`,`physical_quantity`,`system_quantity`,`created_by`,`created_at`,`updated_at`)
                   VALUES '.$placeholders.'
                   ON DUPLICATE KEY UPDATE
                   physical_quantity = VALUES(physical_quantity),
+                  system_quantity = VALUES(system_quantity),
+                  created_by = VALUES(created_by),
                   updated_at = VALUES(updated_at)',
                 $bindings
             );
         }
+    }
+
+    private function authorizeInventoryManager(Request $request): void
+    {
+        $role = strtolower((string) ($request->user()?->roles ?? ''));
+        abort_unless(
+            in_array($role, ['superadmin', 'admin'], true),
+            403,
+            'Hanya admin atau superadmin yang boleh mengelola stok.'
+        );
+    }
+
+    private function assertStoreAccess(Request $request, int $storeId): void
+    {
+        if ($storeId <= 0) {
+            abort(422, 'Store tidak valid.');
+        }
+
+        $role = strtolower((string) ($request->user()?->roles ?? ''));
+        if ($role === 'superadmin') {
+            return;
+        }
+
+        abort_unless(
+            in_array($storeId, store_access_ids($request->user()), true),
+            403,
+            'Store tidak termasuk akses user.'
+        );
     }
 }

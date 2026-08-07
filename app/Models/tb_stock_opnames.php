@@ -16,6 +16,8 @@ class tb_stock_opnames extends Model
         'product_id',
         'store_id',
         'physical_quantity',
+        'system_quantity',
+        'created_by',
         'uuid'
     ];
 }

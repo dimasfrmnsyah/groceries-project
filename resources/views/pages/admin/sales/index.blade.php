@@ -331,6 +331,13 @@
         let onClickedItem = Number(0);
         let itemTable = null;          // instance global DataTable
         let isOpeningModal = false;    // guard agar modal tak double-open
+        const makeIdempotencyKey = () => {
+            if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+                return window.crypto.randomUUID();
+            }
+            return 'sale-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+        };
+        let idempotencyKey = makeIdempotencyKey();
 
 
         $(document).ready(function() {
@@ -822,6 +829,7 @@
         const onCancel = (e) => {
             e.preventDefault();
             selectedRowData = [];
+            idempotencyKey = makeIdempotencyKey();
             formData = {'transaction_date': '', 'no_invoice': $('#invoice-number').val(), 'customer_money': 0, 'total_price':0, 'products': []};
             handleData();
         }
@@ -869,6 +877,7 @@
                     'store_id': $('#store-id').val(),
                     'customer_id': $('#customer-id').val(),
                     'no_invoice': $('#invoice-number').val(),
+                    'idempotency_key': idempotencyKey,
                     'customer_money': 0,
                     'total_price': selectedRowData.reduce((acc, item) => acc + ((item.selling_price * item.qty) - item.discount), 0),
                     'products': selectedRowData
@@ -883,7 +892,7 @@
                         <td colspan="8" class="text-center"><i class="bx bx-message-alt-error"></i> Data Kosong</td>
                     </tr>
                 `);
-                formData = {'transaction_date': $('#transaction-date').val(), 'no_invoice': $('#invoice-number').val(), 'customer_money': 0, 'total_price':0, 'products': []};
+                formData = {'transaction_date': $('#transaction-date').val(), 'no_invoice': $('#invoice-number').val(), 'idempotency_key': idempotencyKey, 'customer_money': 0, 'total_price':0, 'products': []};
                 $('#total-price').html(formatRupiah(0));
             }
         };

@@ -87,50 +87,58 @@ class OrderStockController extends Controller
 
     public function restock(Request $request)
     {
+        $this->authorizeStockManager($request);
         $user         = $request->user();
         $storeId      = store_access_resolve_id($request, $user, ['store_id']);
         if (!$storeId) return back()->with('error', 'Pilih toko terlebih dahulu.');
 
+        $request->validate([
+            'items' => 'required|array|max:1000',
+            'items.*' => 'required|integer|distinct|exists:tb_products,id',
+            'po_qty' => 'nullable|array',
+            'po_qty.*' => 'nullable|integer|min:0|max:10000',
+        ]);
         $items = array_filter($request->input('items', []), fn ($v) => $v !== null && $v !== '');
         if (empty($items)) return back()->with('warning', 'Tidak ada produk yang dipilih.');
 
         $poInput = $request->input('po_qty', []);
 
-        $products = $this->lowStockQuery($storeId)
-            ->whereIn('p.id', $items)
-            ->whereNotNull('st.max_stock')
-            ->get()
-            ->map(function ($row) use ($poInput) {
-                $defaultPo   = max(0, ((int)$row->max_stock) - ((int)$row->stock_system));
-                $inputCustom = (int)($poInput[$row->id] ?? $defaultPo);
-                $row->po_qty = max(0, $inputCustom);
-                return $row;
-            });
-
-        $restockRows   = [];
-        $totalPurchase = 0;
-        $now           = now();
-        $storeOnline   = (int) DB::table('tb_stores')->where('id', $storeId)->value('is_online') === 1;
-        $isPendingStock = $storeOnline ? 0 : 1;
-
-        foreach ($products as $row) {
-            $needed = (int)$row->po_qty;
-            if ($needed <= 0) continue;
-
-            $restockRows[] = [
-                'product_id' => (int)$row->id,
-                'qty'        => $needed,
-                'price'      => (float)$row->purchase_price,
-            ];
-            $totalPurchase += $needed * (float)$row->purchase_price;
-        }
-
-        if (empty($restockRows)) {
-            return back()->with('warning', 'Semua stok sudah maksimal.');
-        }
-
         DB::beginTransaction();
         try {
+            DB::table('tb_stores')->where('id', $storeId)->lockForUpdate()->first();
+            // Hitung ulang setelah lock agar dua admin tidak sama-sama memakai saldo lama
+            // lalu menambahkan stok melebihi nilai maksimum.
+            $products = $this->lowStockQuery($storeId)
+                ->whereIn('p.id', $items)
+                ->whereNotNull('st.max_stock')
+                ->get()
+                ->map(function ($row) use ($poInput) {
+                    $defaultPo   = max(0, ((int)$row->max_stock) - ((int)$row->stock_system));
+                    $inputCustom = (int)($poInput[$row->id] ?? $defaultPo);
+                    $row->po_qty = max(0, $inputCustom);
+                    return $row;
+                });
+
+            $restockRows   = [];
+            $totalPurchase = 0;
+            $now           = now();
+            foreach ($products as $row) {
+                $needed = (int)$row->po_qty;
+                if ($needed <= 0) continue;
+
+                $restockRows[] = [
+                    'product_id' => (int)$row->id,
+                    'qty'        => $needed,
+                    'price'      => (float)$row->purchase_price,
+                ];
+                $totalPurchase += $needed * (float)$row->purchase_price;
+            }
+
+            if (empty($restockRows)) {
+                DB::rollBack();
+                return back()->with('warning', 'Semua stok sudah maksimal.');
+            }
+
             $purchaseId = DB::table('tb_purchases')->insertGetId([
                 'supplier_id' => null,
                 'store_id'    => $storeId,
@@ -147,6 +155,8 @@ class OrderStockController extends Controller
                     'product_id'   => $row['product_id'],
                     'stock'        => $row['qty'],
                     'description'  => 'Restock hingga stok maksimum',
+                    'created_by'   => $user?->id,
+                    'source_type' => 'order_stock',
                     'created_at'   => $now,
                     'updated_at'   => $now,
                 ];
@@ -154,7 +164,7 @@ class OrderStockController extends Controller
                     $payload['store_id'] = $storeId;
                 }
                 if (Schema::hasColumn('tb_incoming_goods', 'is_pending_stock')) {
-                    $payload['is_pending_stock'] = $isPendingStock;
+                    $payload['is_pending_stock'] = 0;
                 }
                 $rows[] = $payload;
             }
@@ -194,6 +204,16 @@ class OrderStockController extends Controller
 
         $filename = 'order-stock-store-'.$storeId.'.xlsx';
         return Excel::download(new OrderStockExport($exportRows), $filename);
+    }
+
+    private function authorizeStockManager(Request $request): void
+    {
+        $role = strtolower((string) ($request->user()?->roles ?? ''));
+        abort_unless(
+            in_array($role, ['superadmin', 'admin'], true),
+            403,
+            'Hanya admin atau superadmin yang boleh melakukan restock.'
+        );
     }
 
     private function buildStoreSummaryPayload(int $storeId): array

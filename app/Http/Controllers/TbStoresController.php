@@ -15,6 +15,7 @@ class TbStoresController extends Controller
      */
     public function index(Request $request)
     {
+        $this->authorizeStoreManager();
         $user = auth()->user();
         $isSuperadmin = strtolower((string) ($user?->roles)) === 'superadmin';
         $stores = tb_stores::query()
@@ -56,6 +57,7 @@ class TbStoresController extends Controller
      */
     public function create()
     {
+        $this->authorizeStoreManager();
         return view('pages.admin.manage_store.create');
     }
 
@@ -64,6 +66,7 @@ class TbStoresController extends Controller
      */
     public function store(Request $request)
     {
+        $this->authorizeStoreManager();
         $validated = $request->validate([
             'store_address' => 'required',
             'store_name' => 'required'
@@ -93,6 +96,7 @@ class TbStoresController extends Controller
      */
     public function edit($id)
     {
+        $this->authorizeStoreManager();
         $stores = tb_stores::findOrFail($id);
         return view('pages.admin.manage_store.create', ['stores' => $stores]); // ← ini harusnya edit.blade.php
     }
@@ -103,6 +107,7 @@ class TbStoresController extends Controller
      */
     public function update(Request $request, $id)
     {
+        $this->authorizeStoreManager();
         $data = $request->validate([
             'store_address' => 'required',
             'store_name' => 'required'
@@ -124,6 +129,7 @@ class TbStoresController extends Controller
      */
     public function destroy($id)
     {
+        $this->authorizeStoreManager();
         DB::beginTransaction();
         try {
             tb_stores::where('id', $id)->delete();
@@ -151,6 +157,14 @@ class TbStoresController extends Controller
             $user = $request->user();
             $role = strtolower((string)($user?->roles));
 
+            // Status toko menentukan apakah movement dianggap berpengaruh ke stok.
+            // Karena itu status tidak boleh diubah oleh kasir/staff.
+            if (!in_array($role, ['superadmin', 'admin'], true)) {
+                return response()->json([
+                    'message' => 'Hanya admin atau superadmin yang boleh mengubah status toko.',
+                ], 403);
+            }
+
             // superadmin boleh pilih toko; admin hanya toko yang diizinkan
             if ($role === 'superadmin') {
                 $storeId = (int)$id;
@@ -170,10 +184,6 @@ class TbStoresController extends Controller
                 return response()->json(['message' => 'Store tidak ditemukan'], 404);
             }
 
-            if (empty($store->uuid)) {
-                $store->uuid = (string) Str::uuid();
-            }
-
             if (!$request->has('is_online')) {
                 return response()->json(['message' => 'Status is_online wajib dikirim'], 422);
             }
@@ -181,11 +191,28 @@ class TbStoresController extends Controller
             $online = (bool)$request->boolean('is_online');
             $note   = $request->input('offline_note');
 
-            DB::transaction(function () use ($store, $online, $note, $storeId) {
+            DB::transaction(function () use ($request, $online, $note, $storeId, $user) {
+                $store = tb_stores::where('id', $storeId)->lockForUpdate()->firstOrFail();
+                $previousOnline = (bool) $store->is_online;
+                if (empty($store->uuid)) {
+                    $store->uuid = (string) Str::uuid();
+                }
                 $store->is_online     = $online;
                 $store->offline_note  = $online ? null : $note;
                 $store->offline_since = $online ? null : now();
                 $store->save();
+
+                DB::table('tb_store_status_logs')->insert([
+                    'store_id'     => $storeId,
+                    'user_id'      => $user?->id,
+                    'from_online'  => $previousOnline ? 1 : 0,
+                    'to_online'    => $online ? 1 : 0,
+                    'offline_note' => $online ? null : $note,
+                    'ip_address'   => $request->ip(),
+                    'user_agent'   => substr((string) $request->userAgent(), 0, 65535),
+                    'created_at'   => now(),
+                    'updated_at'   => now(),
+                ]);
 
                 // jika online kembali, lepas pending stock toko ini
                 if ($online) {
@@ -245,5 +272,15 @@ class TbStoresController extends Controller
                     'updated_at'       => $now,
                 ]);
         }
+    }
+
+    private function authorizeStoreManager(): void
+    {
+        $role = strtolower((string) (auth()->user()?->roles ?? ''));
+        abort_unless(
+            in_array($role, ['superadmin', 'admin'], true),
+            403,
+            'Hanya admin atau superadmin yang boleh mengelola toko.'
+        );
     }
 }

@@ -85,17 +85,7 @@ class TbIncomingGoodsController extends Controller
     public function create()
 
     {
-        $actor = auth()->user();
-        $stores = strtolower((string) ($actor?->roles)) === 'superadmin'
-            ? tb_stores::all()
-            : store_access_list($actor);
-        $products = tb_products:: all();
-        $suppliers = tb_suppliers::all();
-        return view('pages.admin.manage_incoming_good.create', [
-                                                                'stores' => $stores,
-                                                                'products' => $products,
-                                                                'suppliers' => $suppliers
-                                                            ]);
+        abort(410, 'Pencatatan barang masuk langsung dinonaktifkan. Gunakan menu pembelian atau stock opname.');
     }
 
     /**
@@ -103,36 +93,7 @@ class TbIncomingGoodsController extends Controller
      */
     public function store(Request $request)
     {
-        $data = $request->validate([
-            'product_id' => 'required',
-            'supplier_id' => 'required',
-            'store_id' => 'required',
-            'stock' => 'required',
-            'type' => 'required',
-            'description' => 'nullable',
-            'paid_of_date' => 'required|date'
-        ]);
-        $actor = auth()->user();
-        if (strtolower((string) ($actor?->roles)) !== 'superadmin') {
-            $allowed = store_access_ids($actor);
-            if (!in_array((int) $data['store_id'], $allowed, true)) {
-                return redirect()->back()->with('error', 'Store tidak diizinkan.');
-            }
-        }
-        if (Schema::hasColumn('tb_incoming_goods', 'is_pending_stock')) {
-            $storeOnline = (int) tb_stores::where('id', $data['store_id'])->value('is_online') === 1;
-            $data['is_pending_stock'] = $storeOnline ? 0 : 1;
-        }
-
-        DB::beginTransaction();
-        try {
-            tb_incoming_goods::create($data);
-            DB::commit();
-            return redirect()->route('incoming-goods.index')->with('success', 'Barang masuk berhasil dibuat');
-        } catch(\Exception $e) {
-            DB::rollBack();
-            return redirect()->back()->with('error', $e->getMessage());
-        }
+        abort(410, 'Pencatatan barang masuk langsung dinonaktifkan. Gunakan menu pembelian atau stock opname.');
     }
 
     /**
@@ -140,20 +101,7 @@ class TbIncomingGoodsController extends Controller
      */
     public function edit($id)
     {
-        $actor = auth()->user();
-        $stores = strtolower((string) ($actor?->roles)) === 'superadmin'
-            ? tb_stores::all()
-            : store_access_list($actor);
-        $products = tb_products:: all();
-        $suppliers = tb_suppliers::all();
-        $incomingGood = tb_incoming_goods::where('id', $id)->first();
-
-        return view('pages.admin.manage_incoming_good.create', [
-                                                                'incomingGood' => $incomingGood,
-                                                                'stores' => $stores,
-                                                                'products' => $products,
-                                                                'suppliers' => $suppliers
-                                                                ]);
+        abort(403, 'Movement barang masuk tidak dapat diedit.');
     }
 
     /**
@@ -161,36 +109,7 @@ class TbIncomingGoodsController extends Controller
      */
     public function update(Request $request, $id)
     {
-        $data = $request->validate([
-            'product_id' => 'required',
-            'supplier_id' => 'required',
-            'store_id' => 'required',
-            'stock' => 'required',
-            'type' => 'required',
-            'description' => 'nullable',
-            'paid_of_date' => 'required|date'
-        ]);
-        $actor = auth()->user();
-        if (strtolower((string) ($actor?->roles)) !== 'superadmin') {
-            $allowed = store_access_ids($actor);
-            if (!in_array((int) $data['store_id'], $allowed, true)) {
-                return redirect()->back()->with('error', 'Store tidak diizinkan.');
-            }
-        }
-        if (Schema::hasColumn('tb_incoming_goods', 'is_pending_stock')) {
-            $storeOnline = (int) tb_stores::where('id', $data['store_id'])->value('is_online') === 1;
-            $data['is_pending_stock'] = $storeOnline ? 0 : 1;
-        }
-
-        DB::beginTransaction();
-        try {
-            tb_incoming_goods::where('id', $id)->update($data);
-            DB::commit();
-            return redirect()->route('incoming-goods.index')->with('success', 'Barang masuk berhasil dibuat');
-        } catch(\Exception $e){
-            DB::rollBack();
-            return redirect()->back()->with('error', $e->getMessage());
-        }
+        abort(403, 'Movement barang masuk tidak dapat diedit.');
     }
 
     /**
@@ -198,21 +117,7 @@ class TbIncomingGoodsController extends Controller
      */
     public function destroy($id)
     {
-        DB::beginTransaction();
-        try {
-            tb_incoming_goods::where('id', $id)->delete();
-            DB::commit();
-            return response()->json([
-                'success'=>true,
-                'message'=>'Produk berhasil dihapus',
-            ]);
-        } catch(\Exception $e) {
-            DB::rollBack();
-            return response()->json([
-                'success'=>false,
-                'message'=>'Produk gagal dihapus',
-            ]);
-        }
+        abort(403, 'Movement barang masuk tidak dapat dihapus.');
     }
 
     private function emptyOptionsResponse(Request $request)
