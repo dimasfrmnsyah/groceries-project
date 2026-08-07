@@ -17,15 +17,22 @@ return new class extends Migration
             }
         });
 
-        Schema::table('tb_outgoing_goods', function (Blueprint $table) {
+        $hasOutgoingAuditIndex = Schema::hasIndex('tb_outgoing_goods', 'idx_outgoing_sell_product_audit');
+        $hasOutgoingSourceIndex = Schema::hasIndex('tb_outgoing_goods', 'idx_outgoing_source_created');
+
+        Schema::table('tb_outgoing_goods', function (Blueprint $table) use ($hasOutgoingAuditIndex, $hasOutgoingSourceIndex) {
             if (!Schema::hasColumn('tb_outgoing_goods', 'created_by')) {
                 $table->uuid('created_by')->nullable()->after('recorded_by');
             }
             if (!Schema::hasColumn('tb_outgoing_goods', 'source_type')) {
                 $table->string('source_type', 40)->nullable()->after('description');
             }
-            $table->index(['sell_id', 'product_id'], 'idx_outgoing_sell_product_audit');
-            $table->index(['source_type', 'created_at'], 'idx_outgoing_source_created');
+            if (!$hasOutgoingAuditIndex) {
+                $table->index(['sell_id', 'product_id'], 'idx_outgoing_sell_product_audit');
+            }
+            if (!$hasOutgoingSourceIndex) {
+                $table->index(['source_type', 'created_at'], 'idx_outgoing_source_created');
+            }
         });
 
         Schema::table('tb_incoming_goods', function (Blueprint $table) {
