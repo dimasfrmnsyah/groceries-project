@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
+use App\Support\MenuHelper;
 use Yajra\DataTables\Facades\DataTables;
 
 class TbUserController extends Controller
@@ -16,6 +17,7 @@ class TbUserController extends Controller
 
     public function index(Request $request)
     {
+        $this->authorizeUserManager();
         $user = auth()->user();
         $role = strtolower((string) ($user->roles ?? ''));
         $allowedStoreIds = store_access_ids($user);
@@ -63,6 +65,7 @@ class TbUserController extends Controller
 
     public function create()
     {
+        $this->authorizeUserManager();
         $user = auth()->user();
         $role = strtolower((string) ($user->roles ?? ''));
 
@@ -83,6 +86,7 @@ class TbUserController extends Controller
      */
     public function store(Request $request)
     {
+        $this->authorizeUserManager();
         $request->merge(['roles' => strtolower(trim((string) $request->input('roles')))]);
         $data = $request->validate([
             'name' => 'required',
@@ -148,11 +152,19 @@ class TbUserController extends Controller
 
     public function edit($id)
     {
+        $this->authorizeUserManager();
         $actor = auth()->user();
         $stores = strtolower((string) ($actor?->roles)) === 'superadmin'
             ? tb_stores::all()
             : store_access_list($actor);
         $user = User::with('stores')->where('id', $id)->first();
+        if (!$user) {
+            abort(404, 'User tidak ditemukan.');
+        }
+        if (strtolower((string) $actor?->roles) !== 'superadmin'
+            && strtolower((string) $user->roles) === 'superadmin') {
+            abort(403, 'Hanya superadmin yang boleh mengelola akun superadmin.');
+        }
         $selectedStoreIds = $user?->stores?->pluck('id')->all() ?? [];
         if (empty($selectedStoreIds) && Schema::hasTable('user_store')) {
             $selectedStoreIds = DB::table('user_store')
@@ -177,7 +189,12 @@ class TbUserController extends Controller
      */
     public function update(Request $request, $id)
     {
+        $this->authorizeUserManager();
         $user = User::findOrFail($id);
+        if (strtolower((string) auth()->user()?->roles) !== 'superadmin'
+            && strtolower((string) $user->roles) === 'superadmin') {
+            abort(403, 'Hanya superadmin yang boleh mengelola akun superadmin.');
+        }
         $request->merge(['roles' => strtolower(trim((string) $request->input('roles')))]);
         $data = $request->validate([
             'name' => 'required',
@@ -245,6 +262,7 @@ class TbUserController extends Controller
 
     public function updatePassword(Request $request, $id)
     {
+        $this->authorizeUserManager();
         $data = $request->validate([
             'new_password' => 'required|min:8|confirmed'
         ]);
@@ -269,6 +287,7 @@ class TbUserController extends Controller
      */
     public function destroy($id)
     {
+        $this->authorizeUserManager();
         DB::beginTransaction();
         try {
             $actor = auth()->user();
@@ -302,27 +321,49 @@ class TbUserController extends Controller
 
     private function availableRoles(?string $currentRole = null)
     {
-        $roles = collect(['admin', 'staff']);
-
         if (Schema::hasTable('tb_master_roles')) {
-            $roles = $roles->merge(
-                DB::table('tb_master_roles')
-                    ->where('is_active', 1)
-                    ->pluck('role_name')
-            );
+            $masterRoles = DB::table('tb_master_roles')
+                ->pluck('role_name')
+                ->map(fn ($role) => strtolower(trim((string) $role)))
+                ->filter()
+                ->unique();
+            $roles = DB::table('tb_master_roles')
+                ->where('is_active', 1)
+                ->orderBy('role_name')
+                ->pluck('role_name');
+
+            // User lama yang sudah memakai role legacy tetap muncul sampai
+            // migration rekonsiliasi membuat master role-nya.
+            if (Schema::hasTable('users')) {
+                $legacyRoles = DB::table('users')
+                    ->whereNotNull('roles')
+                    ->pluck('roles')
+                    ->map(fn ($role) => strtolower(trim((string) $role)))
+                    ->filter()
+                    ->reject(fn ($role) => $masterRoles->contains($role));
+                $roles = $roles->merge($legacyRoles);
+            }
+        } else {
+            // Fallback tetap berasal dari data database, bukan daftar role hardcode.
+            $roles = DB::table('users')
+                ->whereNotNull('roles')
+                ->distinct()
+                ->pluck('roles');
         }
 
-        if ($currentRole) {
+        $actorRole = strtolower((string) auth()->user()?->roles);
+        if ($currentRole && strtolower($currentRole) !== 'superadmin') {
             $roles->push($currentRole);
         }
 
-        if (strtolower((string) auth()->user()?->roles) === 'superadmin') {
+        if ($actorRole === 'superadmin') {
             $roles->prepend('superadmin');
         }
 
         return $roles
             ->map(fn ($role) => strtolower(trim((string) $role)))
             ->filter()
+            ->reject(fn ($role) => $actorRole !== 'superadmin' && $role === 'superadmin')
             ->unique()
             ->values();
     }
@@ -330,5 +371,16 @@ class TbUserController extends Controller
     private function assignableRoles(?string $currentRole = null): array
     {
         return $this->availableRoles($currentRole)->all();
+    }
+
+    private function authorizeUserManager(): void
+    {
+        $user = auth()->user();
+        $role = strtolower((string) ($user?->roles ?? ''));
+        abort_unless(
+            $role === 'superadmin' || MenuHelper::roleHasRoute('user.index', $role),
+            403,
+            'Anda tidak memiliki permission untuk mengelola user.'
+        );
     }
 }

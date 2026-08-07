@@ -10,6 +10,7 @@ use Illuminate\Support\Str;
 use App\Models\tb_stores;
 use App\Models\tb_products;
 use App\Models\tb_stock_opnames;
+use App\Support\MenuHelper;
 
 class InventoryController extends Controller
 {
@@ -881,9 +882,9 @@ class InventoryController extends Controller
     {
         $role = strtolower((string) ($request->user()?->roles ?? ''));
         abort_unless(
-            in_array($role, ['superadmin', 'admin'], true),
+            $role === 'superadmin' || MenuHelper::roleHasRoute('inventory.index', $role),
             403,
-            'Hanya admin atau superadmin yang boleh mengelola stok.'
+            'Anda tidak memiliki permission untuk mengelola stock opname.'
         );
     }
 
