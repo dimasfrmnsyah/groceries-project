@@ -8,6 +8,7 @@
                     @auth
                         @php
                             $roleHeader = strtolower(Auth::user()->roles ?? '');
+                            $requiresRevenueLogout = in_array($roleHeader, ['staff', 'kasir', 'cashier'], true);
                             $userStoreId = Auth::user()->store_id ?? null;
                             $userStoreName = optional(Auth::user()->store)->store_name ?? '-';
                             $userStoreOnline = optional(Auth::user()->store)->is_online ?? false;
@@ -63,7 +64,7 @@
                         </li>
                         <div class="dropdown-divider mb-0"></div>
                         <li>
-                            @if(strtolower(Auth::user()->roles) === 'staff')
+                            @if($requiresRevenueLogout)
                                 <a class="dropdown-item" href="#" onclick="event.preventDefault(); showRevenueModal();">
                                     <i class='bx bx-log-out-circle'></i><span>{{ __('Logout') }}</span>
                                 </a>
@@ -109,7 +110,7 @@
     @endif
 
     {{-- Modal input pendapatan harian (khusus staff) --}}
-    @if(Auth::check() && strtolower(Auth::user()->roles) === 'staff')
+    @if(Auth::check() && in_array(strtolower(Auth::user()->roles ?? ''), ['staff', 'kasir', 'cashier'], true))
     <div class="modal fade" id="revenueModal" tabindex="-1" aria-labelledby="revenueModalLabel" aria-hidden="true">
         <div class="modal-dialog">
             <form id="revenueForm" method="POST" action="{{ route('staff.submitRevenueAndLogout') }}">
@@ -133,7 +134,7 @@
 </header>
 
 {{-- Script Modal Logout Staff --}}
-@if(Auth::check() && strtolower(Auth::user()->roles) === 'staff')
+@if(Auth::check() && in_array(strtolower(Auth::user()->roles ?? ''), ['staff', 'kasir', 'cashier'], true))
     <script>
         function showRevenueModal() {
             const modal = new bootstrap.Modal(document.getElementById('revenueModal'));

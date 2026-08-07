@@ -59,7 +59,7 @@ Route::group(['middleware' => ['auth']], function () {
 
     Route::get('/check-daily-revenue', function (Request $request) {
         return response()->json([
-            'exists' => 'daily_revenues'::where('user_id', auth()->id())
+            'exists' => \App\Models\tb_daily_revenues::where('user_id', auth()->id())
                 ->where('date', $request->get('date'))
                 ->exists()
         ]);
