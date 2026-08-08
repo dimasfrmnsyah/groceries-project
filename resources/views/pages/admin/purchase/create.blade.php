@@ -52,8 +52,9 @@
             <div class="alert alert-danger">{{ session('error') }}</div>
         @endif
 
-        <form action="{{ route('purchase.store') }}" method="POST">
+        <form action="{{ route('purchase.store') }}" method="POST" id="purchase-form">
             @csrf
+            <input type="hidden" name="idempotency_key" id="idempotency_key">
             <div class="row">
                 <div class="col-md-6 mb-3">
                     <label for="supplier_id" class="form-label">Pilih Supplier</label>
@@ -373,7 +374,11 @@
             resetProductInput(false);
         });
 
-        $('form').submit(function (e) {
+        const idempotencyKey = (window.crypto && crypto.randomUUID)
+            ? crypto.randomUUID()
+            : 'purchase-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+        $('#idempotency_key').val(idempotencyKey);
+        $('#purchase-form').submit(function (e) {
             if (selectedProducts.length === 0) {
                 e.preventDefault();
                 alert('Tambahkan minimal satu produk.');
@@ -382,6 +387,7 @@
             }
 
             updateTotalPrice();
+            $('#purchase-form button[type="submit"]').prop('disabled', true).text('Menyimpan...');
         });
 
         renderProductList();

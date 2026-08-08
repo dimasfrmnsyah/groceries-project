@@ -21,7 +21,7 @@
     <hr />
     <div class="card">
         <div class="card-body">
-            <form action="{{ route('purchase.update', $purchase->id) }}" method="POST">
+            <form action="{{ route('purchase.update', $purchase->id) }}" method="POST" id="purchase-form">
                 @csrf
                 @method('PUT')
 
@@ -331,8 +331,9 @@
                     return;
                 }
 
-                updateTotalPrice();
-            });
+            updateTotalPrice();
+            $('#purchase-form button[type="submit"]').prop('disabled', true).text('Menyimpan...');
+        });
 
             renderProductList();
         });

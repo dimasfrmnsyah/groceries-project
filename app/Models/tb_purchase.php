@@ -11,7 +11,7 @@ class tb_purchase extends Model
 
     protected $table = 'tb_purchases';
 
-    protected $fillable = ['supplier_id', 'store_id', 'total_price', 'created_by', 'uuid'];
+    protected $fillable = ['supplier_id', 'store_id', 'total_price', 'created_by', 'uuid', 'idempotency_key'];
 
     /**
      * Relasi dengan tb_supplier
