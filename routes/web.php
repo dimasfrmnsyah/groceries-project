@@ -132,6 +132,7 @@ Route::get('/sync/manual', [SyncController::class, 'manual'])->name('sync.manual
         Route::get('/edit/{id}', [TbPurchaseController::class, 'edit'])->name('purchase.edit');
         Route::post('/store', [TbPurchaseController::class, 'store'])->name('purchase.store');
         Route::put('/update/{id}', [TbPurchaseController::class, 'update'])->name('purchase.update');
+        Route::delete('/delete/{id}', [TbPurchaseController::class, 'destroy'])->name('purchase.destroy');
     });
 
     Route::prefix('sell')->group(function () {

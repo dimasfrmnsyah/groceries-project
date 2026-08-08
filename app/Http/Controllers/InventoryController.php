@@ -752,13 +752,14 @@ class InventoryController extends Controller
         $prices = [];
         foreach ($rowsPrice as $r) { $prices[(int)$r->id] = (int)$r->purchase_price; }
 
+        $role = strtolower((string) (auth()->user()?->roles ?? ''));
         foreach ($items as $it) {
             $pid  = (int)$it['product_id'];
             $phys = (int)$it['physical_quantity'];
             if ($pid <= 0) continue;
 
             $system = (int)($incoming[$pid] ?? 0) - (int)($outgoing[$pid] ?? 0);
-            $this->assertReasonableStockAdjustment($pid, $system, $phys);
+            $this->assertReasonableStockAdjustment($pid, $system, $phys, $role);
             $minus  = max(0, $system - $phys);
             $plus   = max(0, $phys - $system);
             $price  = (int)($prices[$pid] ?? 0);

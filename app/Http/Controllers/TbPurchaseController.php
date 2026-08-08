@@ -52,7 +52,10 @@ class TbPurchaseController extends Controller
                 return $purchase->creator?->name ?? '-';
             })
             ->addColumn('action', function ($purchase) {
-                return '<a href="'.route('purchase.edit', $purchase->id).'" class="btn btn-sm btn-warning">Edit</a>';
+                return '<a href="'.route('purchase.edit', $purchase->id).'" class="btn btn-sm btn-warning me-1">Edit</a>'
+                    .'<form action="'.route('purchase.destroy', $purchase->id).'" method="POST" class="d-inline" onsubmit="return confirm(\'Hapus pembelian ini?\')">'
+                    .csrf_field().method_field('DELETE')
+                    .'<button type="submit" class="btn btn-sm btn-danger">Hapus</button></form>';
             })
             ->rawColumns(['action'])
             ->make(true);
@@ -267,6 +270,21 @@ class TbPurchaseController extends Controller
                 }
                 tb_incoming_goods::create($payload);
             }
+            if (Schema::hasTable('tb_supplier_debts')) {
+                $debt = DB::table('tb_supplier_debts')->where('purchase_id', $purchase->id)->first();
+                if ($debt && (float) $debt->paid_amount > 0) {
+                    throw new \RuntimeException('Pembelian tidak dapat diubah karena hutang supplier sudah memiliki pembayaran.');
+                }
+                if ($debt) {
+                    $budget = (float) $debt->budget_amount;
+                    DB::table('tb_supplier_debts')->where('id', $debt->id)->update([
+                        'supplier_id' => $validated['supplier_id'],
+                        'purchase_amount' => $totalPrice,
+                        'debt_amount' => max(0, $totalPrice - $budget),
+                        'updated_at' => now(),
+                    ]);
+                }
+            }
             DB::commit();
             return redirect()->route('purchase.index')->with('success', 'Pembelian berhasil diperbarui.');
         } catch (\Throwable $e) {
@@ -282,7 +300,54 @@ class TbPurchaseController extends Controller
      */
     public function destroy($id)
     {
-        abort(403, 'Pembelian tidak dapat dihapus karena merupakan bagian dari ledger stok.');
+        $this->authorizePurchaseManager();
+        $purchase = tb_purchase::findOrFail($id);
+        abort_unless(in_array((int) $purchase->store_id, store_access_ids(auth()->user()), true), 403);
+
+        DB::beginTransaction();
+        try {
+            $purchase = tb_purchase::with('incomingGoods')->lockForUpdate()->findOrFail($id);
+            tb_stores::where('id', $purchase->store_id)->lockForUpdate()->firstOrFail();
+            $oldIds = $purchase->incomingGoods->pluck('id')->all();
+
+            if (Schema::hasTable('tb_supplier_debts')) {
+                $debt = DB::table('tb_supplier_debts')->where('purchase_id', $purchase->id)->lockForUpdate()->first();
+                if ($debt && (float) $debt->paid_amount > 0) {
+                    throw new \RuntimeException('Pembelian tidak dapat dihapus karena hutang supplier sudah memiliki pembayaran.');
+                }
+            }
+
+            foreach ($purchase->incomingGoods->pluck('product_id')->unique() as $productId) {
+                $incoming = DB::table('tb_incoming_goods as ig')
+                    ->join('tb_purchases as p', 'p.id', '=', 'ig.purchase_id')
+                    ->where('p.store_id', $purchase->store_id)
+                    ->where('ig.product_id', $productId)
+                    ->whereNull('ig.deleted_at')
+                    ->whereNotIn('ig.id', $oldIds)
+                    ->sum('ig.stock');
+                $outgoing = DB::table('tb_outgoing_goods as og')
+                    ->join('tb_sells as s', 's.id', '=', 'og.sell_id')
+                    ->where('s.store_id', $purchase->store_id)
+                    ->where('og.product_id', $productId)
+                    ->when(Schema::hasColumn('tb_outgoing_goods', 'deleted_at'), fn ($q) => $q->whereNull('og.deleted_at'))
+                    ->when(Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'), fn ($q) => $q->where('og.is_pending_stock', 0))
+                    ->sum('og.quantity_out');
+                if ((int) $incoming - (int) $outgoing < 0) {
+                    throw new \RuntimeException('Pembelian tidak dapat dihapus karena stoknya sudah dipakai penjualan.');
+                }
+            }
+
+            $purchase->incomingGoods()->delete();
+            $purchase->delete();
+            if (isset($debt) && $debt) {
+                DB::table('tb_supplier_debts')->where('id', $debt->id)->delete();
+            }
+            DB::commit();
+            return redirect()->route('purchase.index')->with('success', 'Pembelian berhasil dihapus.');
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return redirect()->route('purchase.index')->with('error', $e->getMessage());
+        }
     }
 
     private function authorizePurchaseManager(): void
