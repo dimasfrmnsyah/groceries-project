@@ -153,9 +153,6 @@ class InventoryController extends Controller
     {
         $this->authorizeInventoryManager($request);
         $ver = 'adj-v15-nobuilder';
-        if ($this->hasAbnormalStockOpname()) {
-            return $this->stockRecoveryResponse($request, $ver);
-        }
 
         // Opname seluruh produk toko bisa memproses ribuan baris; beri waktu memadai
         // agar tidak berhenti di tengah jalan (Internal Server Error) saat data banyak.
@@ -455,9 +452,6 @@ class InventoryController extends Controller
     {
         $this->authorizeInventoryManager($request);
         $ver = 'adj-v15-nobuilder';
-        if ($this->hasAbnormalStockOpname()) {
-            return $this->stockRecoveryResponse($request, $ver);
-        }
         try {
             $items = $this->parseStockItems($request, true);
 
@@ -815,42 +809,6 @@ class InventoryController extends Controller
         }
 
         return $quantity;
-    }
-
-    private function hasAbnormalStockOpname(): bool
-    {
-        return DB::table('tb_outgoing_goods as og')
-            ->join('tb_sells as s', 's.id', '=', 'og.sell_id')
-            ->whereNull('s.deleted_at')
-            ->whereNull('og.deleted_at')
-            ->where('s.no_invoice', 'like', 'SO-ADJ-OUT-%')
-            ->where('og.recorded_by', 'Stock Opname')
-            ->where(function ($query) {
-                $query->where('og.quantity_out', '>', self::MAX_STOCK_OPNAME_QUANTITY)
-                    ->orWhere('og.quantity_out', '<', 0);
-            })
-            ->exists()
-            || DB::table('tb_incoming_goods as ig')
-                ->join('tb_purchases as p', 'p.id', '=', 'ig.purchase_id')
-                ->join('tb_suppliers as sp', 'sp.id', '=', 'p.supplier_id')
-                ->whereNull('p.deleted_at')
-                ->whereNull('ig.deleted_at')
-                ->where('sp.code', 'SO-ADJ')
-                ->where('ig.description', 'Stock Opname (+)')
-                ->where(function ($query) {
-                    $query->where('ig.stock', '>', self::MAX_STOCK_OPNAME_QUANTITY)
-                        ->orWhere('ig.stock', '<', 0);
-                })
-                ->exists();
-    }
-
-    private function stockRecoveryResponse(Request $request, string $version)
-    {
-        $message = "[$version] Data stock opname abnormal terdeteksi. Adjust dikunci sementara; jalankan inventory:repair-stock-opname setelah backup database.";
-        if ($request->expectsJson()) {
-            return response()->json(['message' => $message], 423);
-        }
-        return redirect()->back()->with('error', $message);
     }
 
     private function assertReasonableStockAdjustment(int $productId, int $systemStock, int $physicalQuantity, string $role): void
