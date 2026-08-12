@@ -825,7 +825,10 @@ class InventoryController extends Controller
             ->whereNull('og.deleted_at')
             ->where('s.no_invoice', 'like', 'SO-ADJ-OUT-%')
             ->where('og.recorded_by', 'Stock Opname')
-            ->where('og.quantity_out', '>', self::MAX_STOCK_OPNAME_QUANTITY)
+            ->where(function ($query) {
+                $query->where('og.quantity_out', '>', self::MAX_STOCK_OPNAME_QUANTITY)
+                    ->orWhere('og.quantity_out', '<', 0);
+            })
             ->exists()
             || DB::table('tb_incoming_goods as ig')
                 ->join('tb_purchases as p', 'p.id', '=', 'ig.purchase_id')
@@ -834,7 +837,10 @@ class InventoryController extends Controller
                 ->whereNull('ig.deleted_at')
                 ->where('sp.code', 'SO-ADJ')
                 ->where('ig.description', 'Stock Opname (+)')
-                ->where('ig.stock', '>', self::MAX_STOCK_OPNAME_QUANTITY)
+                ->where(function ($query) {
+                    $query->where('ig.stock', '>', self::MAX_STOCK_OPNAME_QUANTITY)
+                        ->orWhere('ig.stock', '<', 0);
+                })
                 ->exists();
     }
 

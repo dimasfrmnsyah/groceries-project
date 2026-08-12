@@ -31,10 +31,11 @@
 
     @if($children->isNotEmpty())
       <ul class="ms-4 list-unstyled" data-tree>
+        {{-- Teruskan set permission ke node anak. --}}
         @include('settings.access.tree', [
           'nodes'    => $children,
           'lock'     => $lock,
-          'allowSet' => $allowSet,  {{-- ⬅️ teruskan ke anak --}}
+          'allowSet' => $allowSet,
         ])
       </ul>
     @endif

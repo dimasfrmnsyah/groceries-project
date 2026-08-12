@@ -18,6 +18,11 @@ use Illuminate\Database\QueryException;
 
 class TbSalesController extends Controller
 {
+    // Data opname lama pernah tersimpan dengan nilai negatif/ekstrem. Nilai
+    // seperti ini tidak boleh memengaruhi saldo kasir, tetapi baris lama yang
+    // normal tetap harus dihitung.
+    private const MAX_LEGACY_STOCK_ADJUSTMENT = 10000;
+
     public function index(Request $request)
     {
         $user = auth()->user();
@@ -63,9 +68,10 @@ class TbSalesController extends Controller
             'transaction_date' => 'required|date',
             'customer_money' => 'required|numeric|min:0',
             'customer_id' => 'nullable|integer',
-            // Kunci ini wajib dikirim oleh kasir agar retry akibat double-click/
-            // koneksi putus tidak membuat transaksi kedua.
-            'idempotency_key' => 'required|string|max:64',
+            // Nullable untuk kompatibilitas browser kasir lama. Jika kosong,
+            // server membentuk key legacy dari nomor invoice + user + toko.
+            'idempotency_key' => 'nullable|string|max:64',
+            'no_invoice' => 'nullable|string|max:80',
             'products' => 'required|array|min:1',
             'products.*.id' => 'required|integer|exists:tb_products,id',
             'products.*.qty' => 'required|integer|min:1|max:100000',
@@ -84,12 +90,16 @@ class TbSalesController extends Controller
                 ], 422);
         }
 
-        $idempotencyKey = trim((string) $input['idempotency_key']);
+        $idempotencyKey = trim((string) ($input['idempotency_key'] ?? ''));
         if ($idempotencyKey === '') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Kunci transaksi tidak valid. Silakan muat ulang halaman kasir.',
-            ], 422);
+            $legacyInvoice = trim((string) ($input['no_invoice'] ?? ''));
+            $idempotencyKey = $legacyInvoice !== ''
+                ? 'legacy-'.hash('sha256', implode('|', [
+                    (string) $user->id,
+                    (string) $store_id,
+                    $legacyInvoice,
+                ]))
+                : 'legacy-'.Str::uuid();
         }
 
         $requestedQtyByProduct = collect($input['products'])
@@ -145,6 +155,11 @@ class TbSalesController extends Controller
                     $stock = (int) ($availableStock[$productId] ?? 0);
                     if ($stock < 0 || $qty > $stock) {
                         $productName = $products[$productId]->product_name ?? 'Produk';
+                        if ($stock < 0) {
+                            throw new \InvalidArgumentException(
+                                "Saldo stok lama {$productName} tidak konsisten ({$stock}). Lakukan stock opname fisik sebelum menjual produk ini."
+                            );
+                        }
                         throw new \InvalidArgumentException(
                             "Stok {$productName} hanya {$stock}. Qty tidak boleh lebih dari stok tersedia."
                         );
@@ -241,7 +256,9 @@ class TbSalesController extends Controller
         } catch (QueryException $e) {
             // Unique idempotency_key menangani retry/request ganda yang datang bersamaan.
             $existing = tb_sell::where('idempotency_key', $idempotencyKey)->first();
-            if ($existing) {
+            if ($existing
+                && (int) $existing->store_id === (int) $store_id
+                && $this->saleMovementMatches($existing->id, $requestedQtyByProduct)) {
                 return response()->json([
                     'success' => true,
                     'duplicate' => true,
@@ -249,6 +266,12 @@ class TbSalesController extends Controller
                     'sell_id' => $existing->id,
                     'invoice' => $existing->no_invoice,
                 ]);
+            }
+            if ($existing) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Transaksi dengan kunci yang sama tidak lengkap atau berbeda. Periksa invoice sebelum mengulang.',
+                ], 409);
             }
             return response()->json([
                 'success' => false,
@@ -282,8 +305,19 @@ class TbSalesController extends Controller
 
         $incomingSub = DB::table('tb_incoming_goods as ig')
             ->leftJoin('tb_purchases as p', 'ig.purchase_id', '=', 'p.id')
+            ->leftJoin('tb_suppliers as sp', 'sp.id', '=', 'p.supplier_id')
             ->when($hasIncomingDeleted, fn ($q) => $q->whereNull('ig.deleted_at'))
             ->when($hasPurchaseDeleted, fn ($q) => $q->whereNull('p.deleted_at'))
+            // Kompatibilitas data lama: source_type kosong tetap dihitung.
+            // Hanya adjustment SO-ADJ yang nilainya jelas korup yang diabaikan.
+            ->where(function ($q) {
+                $q->whereNull('sp.code')
+                    ->orWhere('sp.code', '<>', 'SO-ADJ')
+                    ->orWhere(function ($normal) {
+                        $normal->where('ig.stock', '>=', 0)
+                            ->where('ig.stock', '<=', self::MAX_LEGACY_STOCK_ADJUSTMENT);
+                    });
+            })
             ->when(
                 $hasIncomingStore,
                 fn ($q) => $q->where(function ($qq) use ($storeId) {
@@ -306,6 +340,17 @@ class TbSalesController extends Controller
             ->when($hasOutgoingDeleted, fn ($q) => $q->whereNull('og.deleted_at'))
             ->when($hasSellDeleted, fn ($q) => $q->whereNull('sl.deleted_at'))
             ->where('sl.store_id', $storeId)
+            // source_type kosong pada transaksi kasir lama tetap valid. Hanya
+            // opname lama dengan qty negatif/ekstrem yang dikeluarkan dari
+            // saldo kasir sampai data tersebut dikarantina/direkonsiliasi.
+            ->where(function ($q) {
+                $q->where('sl.no_invoice', 'not like', 'SO-ADJ-OUT-%')
+                    ->orWhereRaw('LOWER(TRIM(COALESCE(og.recorded_by, ""))) <> ?', ['stock opname'])
+                    ->orWhere(function ($normal) {
+                        $normal->where('og.quantity_out', '>=', 0)
+                            ->where('og.quantity_out', '<=', self::MAX_LEGACY_STOCK_ADJUSTMENT);
+                    });
+            })
             ->when($hasPendingOut, function ($q) {
                 $q->where(function ($qq) {
                     $qq->whereNull('og.is_pending_stock')
