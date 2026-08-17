@@ -153,13 +153,14 @@ class TbSalesController extends Controller
 
                 foreach ($requestedQtyByProduct as $productId => $qty) {
                     $stock = (int) ($availableStock[$productId] ?? 0);
-                    if ($stock < 0 || $qty > $stock) {
+                    // Saldo negatif adalah data legacy yang sudah terlanjur tidak
+                    // konsisten. Jangan blokir operasional: movement penjualan
+                    // tetap dibuat dan saldo akan berkurang sesuai qty.
+                    if ($stock < 0) {
+                        continue;
+                    }
+                    if ($qty > $stock) {
                         $productName = $products[$productId]->product_name ?? 'Produk';
-                        if ($stock < 0) {
-                            throw new \InvalidArgumentException(
-                                "Saldo stok lama {$productName} tidak konsisten ({$stock}). Lakukan stock opname fisik sebelum menjual produk ini."
-                            );
-                        }
                         throw new \InvalidArgumentException(
                             "Stok {$productName} hanya {$stock}. Qty tidak boleh lebih dari stok tersedia."
                         );

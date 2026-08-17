@@ -416,7 +416,7 @@
 
         const getItemStock = (item) => {
             const stock = parseInt(item && item.current_stock, 10);
-            return Number.isFinite(stock) && stock > 0 ? stock : 0;
+            return Number.isFinite(stock) ? stock : 0;
         }
 
         const showStockLimit = (item, stock) => {
@@ -436,7 +436,10 @@
             const currentQty = findIndex !== -1 ? normalizeQty(selectedRowData[findIndex].qty) : 0;
             const nextQty = currentQty + qty;
 
-            if (stock <= 0 || nextQty > stock) {
+            // Saldo negatif adalah data legacy yang sedang direkonsiliasi.
+            // Kasir tetap boleh menyelesaikan penjualan; server akan mencatat
+            // movement keluar dan mengurangi saldo sesuai qty.
+            if (stock >= 0 && nextQty > stock) {
                 showStockLimit(item, stock);
                 return false;
             }
@@ -807,7 +810,7 @@
             const qty = normalizeQty(value);
             const stock = getItemStock(item);
 
-            if (qty > stock) {
+            if (stock >= 0 && qty > stock) {
                 showStockLimit(item, stock);
                 selectedRowData[index].qty = stock;
             } else {
@@ -863,7 +866,7 @@
                             <td>${index + 1}</td>
                             <td>${item.product_code}</td>
                             <td>${item.product_name}</td>
-                            <td><input type="number" name="products[${index}][qty]" min="1" max="${getItemStock(item)}" style="width:50px ;text-align:right; border:1px solid #ced4da" value="${item.qty}" oninput="onQtyChange(${index}, this.value)"></td>
+                            <td><input type="number" name="products[${index}][qty]" min="1" ${getItemStock(item) >= 0 ? `max="${getItemStock(item)}"` : ''} style="width:50px ;text-align:right; border:1px solid #ced4da" value="${item.qty}" oninput="onQtyChange(${index}, this.value)"></td>
                             <td style="text-align:right">${formatRupiah(item.selling_price)}</td>
                             
                             <td style="text-align:right">${formatRupiah(item.total)}</td>
