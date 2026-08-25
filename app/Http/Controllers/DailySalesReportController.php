@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\tb_outgoing_goods;
 use App\Models\tb_sell;
 use App\Models\tb_stores;
+use App\Models\tb_types;
 use App\Exports\ArrayExport;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -30,9 +31,14 @@ class DailySalesReportController extends Controller
             : null;
 
         $today             = now('Asia/Jakarta')->toDateString();
-        $defaultDateFrom   = $today;
-        $defaultDateTo     = $today;
-        $cashiers          = $this->availableCashiers($selectedStoreId, $today, $today, 'all');
+        $defaultDateFrom   = $this->tryParseDate($request->get('date_from'), 'Asia/Jakarta')?->toDateString() ?? $today;
+        $defaultDateTo     = $this->tryParseDate($request->get('date_to'), 'Asia/Jakarta')?->toDateString() ?? $defaultDateFrom;
+        $selectedTypeId    = filter_var($request->get('type_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) ?: null;
+        $initialCashier    = (string) $request->get('cashier', '');
+        $initialSourceMode = in_array($request->get('source_mode'), ['online', 'offline'], true)
+            ? $request->get('source_mode')
+            : 'all';
+        $cashiers          = $this->availableCashiers($selectedStoreId, $defaultDateFrom, $defaultDateTo, $initialSourceMode);
         // Sembunyikan total penjualan untuk role staff/kasir
         $isCashierRole     = in_array(strtolower((string)($user?->roles)), ['kasir','cashier','staff']);
 
@@ -44,7 +50,11 @@ class DailySalesReportController extends Controller
             'defaultDateFrom'  => $defaultDateFrom,
             'defaultDateTo'    => $defaultDateTo,
             'cashiers'         => $cashiers,
-            'hideSalesTotal'   => $isCashierRole,
+            'types'             => tb_types::query()->orderBy('type_name')->get(['id', 'type_name']),
+            'selectedTypeId'    => $selectedTypeId,
+            'initialCashier'    => $initialCashier,
+            'initialSourceMode' => $initialSourceMode,
+            'hideSalesTotal'    => $isCashierRole,
         ]);
     }
 
@@ -55,46 +65,24 @@ class DailySalesReportController extends Controller
 
         [$startDate, $endDate] = $this->resolveDateRange($request->get('date_from'), $request->get('date_to'));
         $cashier      = $request->get('cashier');
+        $typeId       = filter_var($request->get('type_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) ?: null;
         $sourceMode   = $request->get('source_mode');
         $sourceMode   = in_array($sourceMode, ['online', 'offline'], true) ? $sourceMode : 'all';
 
-        $baseQuery = tb_outgoing_goods::query()
-            ->join('tb_sells as s', 's.id', '=', 'tb_outgoing_goods.sell_id')
-            ->leftJoin('tb_products as p', 'p.id', '=', 'tb_outgoing_goods.product_id')
-            ->leftJoin('tb_stores as st', 'st.id', '=', 's.store_id')
-            ->leftJoin('tb_customers as c', 'c.id', '=', 's.customer_id')
-            ->when(
-                Schema::hasColumn('tb_sells', 'deleted_at'),
-                fn ($q) => $q->whereNull('s.deleted_at')
-            )
-            ->when(
-                Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
-                fn ($q) => $q->whereNull('tb_outgoing_goods.deleted_at')
-            )
-            ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId))
-            // abaikan penyesuaian stock opname (invoice dibuat otomatis)
-            ->where(function ($q) {
-                $q->whereNull('s.no_invoice')
-                  ->orWhere(function ($qq) {
-                      $qq->where('s.no_invoice', 'not like', 'SO-ADJ-%')
-                         ->where('s.no_invoice', 'not like', 'AR-%')
-                         ->where('s.no_invoice', 'not like', 'TRF-%');
-                  });
-            })
-            // abaikan pencatatan khusus stock opname
-            ->when(Schema::hasColumn('tb_outgoing_goods','recorded_by'),
-                fn($q) => $q->whereRaw('LOWER(COALESCE(TRIM(tb_outgoing_goods.recorded_by), "")) != ?', ['stock opname'])
-            )
-            // filter mode toko: online (potong stok) vs offline (pending stok opname)
-            ->when(
-                Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock') && $sourceMode !== 'all',
-                fn ($q) => $q->where('tb_outgoing_goods.is_pending_stock', $sourceMode === 'offline' ? 1 : 0)
-            )
-            ->whereBetween('s.date', [$startDate->copy()->startOfDay(), $endDate->copy()->endOfDay()])
-            ->when(
-                $cashier && Schema::hasColumn('tb_outgoing_goods', 'recorded_by'),
-                fn ($q) => $q->where('tb_outgoing_goods.recorded_by', $cashier)
-            )
+        $filteredQuery = $this->filteredSalesQuery(
+            $storeId,
+            $startDate,
+            $endDate,
+            $cashier,
+            $sourceMode,
+            $typeId
+        );
+
+        if ($typeId) {
+            return $this->productTypeData($request, $filteredQuery, $startDate, $endDate, $storeId, $sourceMode);
+        }
+
+        $baseQuery = (clone $filteredQuery)
             ->selectRaw('
                 p.id as product_id,
                 p.product_code,
@@ -108,6 +96,7 @@ class DailySalesReportController extends Controller
                 SUM(tb_outgoing_goods.discount) as discount,
                 COALESCE(p.selling_price, 0) as unit_price,
                 SUM(COALESCE(tb_outgoing_goods.quantity_out,0) * COALESCE(p.selling_price,0) - COALESCE(tb_outgoing_goods.discount,0)) as line_total,
+                SUM(COALESCE(tb_outgoing_goods.quantity_out,0) * COALESCE(p.purchase_price,0)) as line_hpp,
                 GROUP_CONCAT(DISTINCT s.id ORDER BY s.id DESC) as sell_ids,
                 GROUP_CONCAT(DISTINCT s.no_invoice ORDER BY s.no_invoice DESC) as invoices
             ')
@@ -119,7 +108,8 @@ class DailySalesReportController extends Controller
                 's.store_id',
                 'tb_outgoing_goods.recorded_by',
                 DB::raw('DATE(s.date)'),
-                'p.selling_price'
+                'p.selling_price',
+                'p.purchase_price'
             );
 
         $summaryRows = (clone $baseQuery)->get();
@@ -164,6 +154,7 @@ class DailySalesReportController extends Controller
             'items'    => $summaryRows->count(),
             'quantity' => (float)$summaryRows->sum('quantity_out'),
             'sales'    => (float)$salesTotal,
+            'hpp'      => (float)$summaryRows->sum('line_hpp'),
             'discount' => (float)$summaryRows->sum('discount'),
         ];
 
@@ -208,6 +199,7 @@ class DailySalesReportController extends Controller
             })
             ->rawColumns(['action'])
             ->with([
+                'report_mode' => 'detail',
                 'totals'      => $totals,
                 'cashiers'    => $cashiers,
                 'date_range'  => [
@@ -225,8 +217,22 @@ class DailySalesReportController extends Controller
 
         [$startDate, $endDate] = $this->resolveDateRange($request->get('date_from'), $request->get('date_to'));
         $cashier      = $request->get('cashier');
+        $typeId       = filter_var($request->get('type_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) ?: null;
         $sourceMode   = $request->get('source_mode');
         $sourceMode   = in_array($sourceMode, ['online', 'offline'], true) ? $sourceMode : 'all';
+
+        if ($typeId) {
+            $filteredQuery = $this->filteredSalesQuery(
+                $storeId,
+                $startDate,
+                $endDate,
+                $cashier,
+                $sourceMode,
+                $typeId
+            );
+
+            return $this->exportProductType($filteredQuery, $startDate, $endDate);
+        }
 
         $activityField = 's.date';
         $select = [
@@ -264,6 +270,7 @@ class DailySalesReportController extends Controller
                 fn ($q) => $q->whereNull('tb_outgoing_goods.deleted_at')
             )
             ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId))
+            ->when($typeId, fn ($q) => $q->where('p.type_id', $typeId))
             // abaikan penyesuaian stock opname (invoice dibuat otomatis)
             ->where(function ($q) {
                 $q->whereNull('s.no_invoice')
@@ -337,6 +344,166 @@ class DailySalesReportController extends Controller
         $filename = 'Sales-Detail-' . $dateLabel . '.xlsx';
 
         return Excel::download(new ArrayExport($rows, $headings), $filename);
+    }
+
+    private function filteredSalesQuery(
+        ?int $storeId,
+        Carbon $startDate,
+        Carbon $endDate,
+        ?string $cashier,
+        string $sourceMode,
+        ?int $typeId = null
+    ) {
+        return tb_outgoing_goods::query()
+            ->join('tb_sells as s', 's.id', '=', 'tb_outgoing_goods.sell_id')
+            ->leftJoin('tb_products as p', 'p.id', '=', 'tb_outgoing_goods.product_id')
+            ->leftJoin('tb_types as t', 't.id', '=', 'p.type_id')
+            ->leftJoin('tb_stores as st', 'st.id', '=', 's.store_id')
+            ->leftJoin('tb_customers as c', 'c.id', '=', 's.customer_id')
+            ->when(
+                Schema::hasColumn('tb_sells', 'deleted_at'),
+                fn ($q) => $q->whereNull('s.deleted_at')
+            )
+            ->when(
+                Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
+                fn ($q) => $q->whereNull('tb_outgoing_goods.deleted_at')
+            )
+            ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId))
+            ->when($typeId, fn ($q) => $q->where('p.type_id', $typeId))
+            ->where(function ($q) {
+                $q->whereNull('s.no_invoice')
+                    ->orWhere(function ($qq) {
+                        $qq->where('s.no_invoice', 'not like', 'SO-ADJ-%')
+                            ->where('s.no_invoice', 'not like', 'AR-%')
+                            ->where('s.no_invoice', 'not like', 'TRF-%');
+                    });
+            })
+            ->when(
+                Schema::hasColumn('tb_outgoing_goods', 'recorded_by'),
+                fn ($q) => $q->whereRaw('LOWER(COALESCE(TRIM(tb_outgoing_goods.recorded_by), "")) != ?', ['stock opname'])
+            )
+            ->when(
+                Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock') && $sourceMode !== 'all',
+                fn ($q) => $q->where('tb_outgoing_goods.is_pending_stock', $sourceMode === 'offline' ? 1 : 0)
+            )
+            ->whereBetween('s.date', [$startDate->copy()->startOfDay(), $endDate->copy()->endOfDay()])
+            ->when(
+                $cashier && Schema::hasColumn('tb_outgoing_goods', 'recorded_by'),
+                fn ($q) => $q->where('tb_outgoing_goods.recorded_by', $cashier)
+            );
+    }
+
+    private function productTypeData(
+        Request $request,
+        $filteredQuery,
+        Carbon $startDate,
+        Carbon $endDate,
+        ?int $storeId,
+        string $sourceMode
+    ) {
+        $productQuery = (clone $filteredQuery)
+            ->selectRaw('
+                p.id as product_id,
+                p.product_code,
+                p.product_name,
+                COALESCE(t.type_name, "-") as type_name,
+                SUM(COALESCE(tb_outgoing_goods.quantity_out, 0)) as quantity_out,
+                SUM(
+                    COALESCE(tb_outgoing_goods.quantity_out, 0) * COALESCE(p.selling_price, 0)
+                    - COALESCE(tb_outgoing_goods.discount, 0)
+                ) as total_sales,
+                COALESCE(p.purchase_price, 0) as unit_hpp,
+                SUM(COALESCE(tb_outgoing_goods.quantity_out, 0) * COALESCE(p.purchase_price, 0)) as total_hpp
+            ')
+            ->groupBy(
+                'p.id',
+                'p.product_code',
+                'p.product_name',
+                't.type_name',
+                'p.purchase_price'
+            )
+            ->orderBy('p.product_name');
+
+        $summaryRows = (clone $productQuery)->get();
+        $cashiers = $this->availableCashiers(
+            $storeId,
+            $startDate->toDateString(),
+            $endDate->toDateString(),
+            $sourceMode
+        );
+
+        return DataTables::eloquent($productQuery)
+            ->addIndexColumn()
+            ->filter(function ($query) use ($request) {
+                $search = $request->input('search.value');
+                if (!$search) {
+                    return;
+                }
+
+                $like = '%'.$search.'%';
+                $query->where(function ($q) use ($like) {
+                    $q->where('p.product_code', 'like', $like)
+                        ->orWhere('p.product_name', 'like', $like)
+                        ->orWhere('t.type_name', 'like', $like);
+                });
+            })
+            ->with([
+                'report_mode' => 'type',
+                'totals' => [
+                    'items' => $summaryRows->count(),
+                    'quantity' => (float) $summaryRows->sum('quantity_out'),
+                    'hpp' => (float) $summaryRows->sum('total_hpp'),
+                    'sales' => (float) $summaryRows->sum('total_sales'),
+                    'discount' => 0,
+                ],
+                'cashiers' => $cashiers,
+                'date_range' => [$startDate->toDateString(), $endDate->toDateString()],
+            ])
+            ->toJson();
+    }
+
+    private function exportProductType($filteredQuery, Carbon $startDate, Carbon $endDate)
+    {
+        $rows = (clone $filteredQuery)
+            ->selectRaw('
+                p.product_code,
+                p.product_name,
+                COALESCE(t.type_name, "-") as type_name,
+                SUM(COALESCE(tb_outgoing_goods.quantity_out, 0)) as quantity_out,
+                COALESCE(p.purchase_price, 0) as unit_hpp,
+                SUM(COALESCE(tb_outgoing_goods.quantity_out, 0) * COALESCE(p.purchase_price, 0)) as total_hpp
+            ')
+            ->groupBy('p.id', 'p.product_code', 'p.product_name', 't.type_name', 'p.purchase_price')
+            ->orderBy('p.product_name')
+            ->get()
+            ->map(fn ($row) => [
+                $row->product_code ?? '',
+                $row->product_name ?? '',
+                $row->type_name ?? '-',
+                (int) $row->quantity_out,
+                (float) $row->unit_hpp,
+                (float) $row->total_hpp,
+            ])
+            ->values()
+            ->all();
+
+        $totalHpp = (float) collect($rows)->sum(fn ($row) => (float) $row[5]);
+        $rows[] = ['', '', '', '', 'TOTAL HPP', $totalHpp];
+
+        $headings = [
+            'Kode Produk',
+            'Nama Produk',
+            'Tipe',
+            'Qty Terjual',
+            'HPP Satuan',
+            'Total HPP',
+        ];
+
+        $dateLabel = $startDate->format('Ymd') . '-' . $endDate->format('Ymd');
+        return Excel::download(
+            new ArrayExport($rows, $headings),
+            'Sales-Product-Type-' . $dateLabel . '.xlsx'
+        );
     }
 
     private function resolveDateRange(?string $from, ?string $to): array

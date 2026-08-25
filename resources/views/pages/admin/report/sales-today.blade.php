@@ -49,6 +49,18 @@
             <small id="date_hint" class="text-danger"></small>
         </div>
 
+        <div class="d-flex align-items-center gap-2">
+            <label for="filter_type" class="mb-0">Tipe</label>
+            <select id="filter_type" class="form-select" style="min-width:220px">
+                <option value="">Semua Tipe</option>
+                @foreach($types as $type)
+                    <option value="{{ $type->id }}" @selected((string)($selectedTypeId ?? '') === (string)$type->id)>
+                        {{ $type->type_name }}
+                    </option>
+                @endforeach
+            </select>
+        </div>
+
         <div class="ms-auto">
             <a id="export_sales_excel"
                class="btn btn-outline-success btn-sm"
@@ -65,9 +77,9 @@
         <div>
             <small class="text-muted d-block">Mode Toko / Potong Stok</small>
             <div id="data_source_buttons" class="btn-group" role="group" aria-label="Sumber data">
-                <button type="button" class="btn btn-outline-primary active" data-source-mode="all">Semua</button>
-                <button type="button" class="btn btn-outline-secondary" data-source-mode="online">Online</button>
-                <button type="button" class="btn btn-outline-secondary" data-source-mode="offline">Offline</button>
+                <button type="button" class="btn btn-outline-primary {{ ($initialSourceMode ?? 'all') === 'all' ? 'active' : '' }}" data-source-mode="all">Semua</button>
+                <button type="button" class="btn btn-outline-secondary {{ ($initialSourceMode ?? 'all') === 'online' ? 'active' : '' }}" data-source-mode="online">Online</button>
+                <button type="button" class="btn btn-outline-secondary {{ ($initialSourceMode ?? 'all') === 'offline' ? 'active' : '' }}" data-source-mode="offline">Offline</button>
             </div>
         </div>
     </div>
@@ -78,9 +90,9 @@
         <div class="d-flex flex-wrap align-items-center gap-2">
             <strong>Filter Kasir:</strong>
             <div id="cashier_filters" class="btn-group flex-wrap" role="group" aria-label="Filter kasir">
-                <button type="button" class="btn btn-outline-secondary btn-sm active" data-cashier-filter="">Semua Kasir</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm {{ empty($initialCashier) ? 'active' : '' }}" data-cashier-filter="">Semua Kasir</button>
                 @foreach($cashiers as $cashier)
-                    <button type="button" class="btn btn-outline-secondary btn-sm" data-cashier-filter="{{ $cashier }}">
+                    <button type="button" class="btn btn-outline-secondary btn-sm {{ ($initialCashier ?? '') === $cashier ? 'active' : '' }}" data-cashier-filter="{{ $cashier }}">
                         {{ $cashier }}
                     </button>
                 @endforeach
@@ -89,11 +101,11 @@
     </div>
 </div>
 
-<input type="hidden" id="filter_cashier" value="">
-<input type="hidden" id="filter_data_source" value="all">
+<input type="hidden" id="filter_cashier" value="{{ $initialCashier ?? '' }}">
+<input type="hidden" id="filter_data_source" value="{{ $initialSourceMode ?? 'all' }}">
 
 <div class="row g-3 mb-3">
-    <div class="col-md-3">
+    <div class="col-md-3" id="summary_items_card">
         <div class="card shadow-none border h-100">
             <div class="card-body">
                 <small class="text-muted text-uppercase">Total Item</small>
@@ -110,11 +122,19 @@
         </div>
     </div>
     @unless($hideSalesTotal ?? false)
-    <div class="col-md-3">
+    <div class="col-md-3" id="summary_sales_card">
         <div class="card shadow-none border h-100">
             <div class="card-body">
-                <small class="text-muted text-uppercase">Total Penjualan</small>
+                <small class="text-muted text-uppercase">Total Harga Terjual</small>
                 <h4 class="mb-0" id="summary_sales">Rp 0</h4>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3" id="summary_hpp_card">
+        <div class="card shadow-none border h-100">
+            <div class="card-body">
+                <small class="text-muted text-uppercase">Total HPP Terjual</small>
+                <h4 class="mb-0" id="summary_hpp">Rp 0</h4>
             </div>
         </div>
     </div>
@@ -143,6 +163,7 @@
         </div>
     </div>
 </div>
+
 @endsection
 
 @section('scripts')
@@ -156,6 +177,7 @@
 
         const $store   = $('#filter_store');
         const $cashier = $('#filter_cashier');
+        const $type = $('#filter_type');
         const $dataSource = $('#filter_data_source');
         const $dateFrom = $('#filter_date_from');
         const $dateTo   = $('#filter_date_to');
@@ -163,76 +185,152 @@
         const $cashierFilters = $('#cashier_filters');
         const $dataSourceButtons = $('#data_source_buttons');
         const $exportBtn = $('#export_sales_excel');
+        const $summarySalesCard = $('#summary_sales_card');
+        const $summaryHppCard = $('#summary_hpp_card');
         const exportBase = $exportBtn.data('base');
 
         let totalsFromServer = null;
+        let table = null;
+        let tableGeneration = 0;
+        let typeMode = Boolean($type.val());
         const hideSales = @json($hideSalesTotal ?? false);
 
-        const table = $('#table_daily_sales').DataTable({
-            processing: true,
-            serverSide: true,
-            ajax: {
-                url: "{{ route('report.sales.today.data') }}",
-                data: function (d) {
-                    d.store   = $store.length ? $store.val() : '';
-                    d.cashier = $cashier.val() || '';
-                    d.date_from = $dateFrom.val() || '';
-                    d.date_to   = $dateTo.val() || '';
-                    d.source_mode = $dataSource.val() || 'online';
-                },
-                dataSrc: function (json) {
-                    try {
-                        totalsFromServer = json?.totals || null;
-                        updateSummary();
-                        renderCashierButtons(json?.cashiers || []);
-                        return json?.data || [];
-                    } catch (e) {
-                        console.error('DataTables dataSrc error:', e);
-                        return [];
-                    }
-                },
-                error: function (xhr) {
-                    console.error('DataTables AJAX error', xhr.responseText);
-                    alert('Gagal memuat data. Silakan coba lagi.');
+        const quantityColumn = {
+            data: 'quantity_out',
+            name: 'quantity_out',
+            className: 'text-end',
+            render: (data, type) => type === 'display' || type === 'filter'
+                ? Number(data || 0).toLocaleString('id-ID')
+                : data
+        };
+
+        const defaultColumns = [
+            { data: 'DT_RowIndex', name: 'DT_RowIndex', orderable: false, searchable: false },
+            { data: 'invoices', name: 'invoices', render: d => d || '-' },
+            { data: 'store_name', name: 'store_id', defaultContent: '-' },
+            { data: 'recorded_by', name: 'recorded_by', defaultContent: '-' },
+            {
+                data: 'product_name',
+                name: 'product_name',
+                defaultContent: '-',
+                render: (data, type, row) => {
+                    const code = row?.product_code ? `<div class="text-muted small">Kode: ${row.product_code}</div>` : '';
+                    return `${data || '-'}${code}`;
                 }
             },
-            columns: [
-                { data: 'DT_RowIndex', name: 'DT_RowIndex', orderable: false, searchable: false },
-                { data: 'invoices', name: 'invoices', render: d => d || '-' },
-                { data: 'store_name', name: 'store_id', defaultContent: '-' },
-                { data: 'recorded_by', name: 'recorded_by', defaultContent: '-' },
-                {
-                    data: 'product_name',
-                    name: 'product_name',
-                    defaultContent: '-',
-                    render: (data, type, row) => {
-                        const code = row?.product_code ? `<div class="text-muted small">Kode: ${row.product_code}</div>` : '';
-                        return `${data || '-'}${code}`;
+            quantityColumn,
+            {
+                data: 'activity_date',
+                name: 'activity_date',
+                render: (data) => data ? moment(data).format('DD MMM YYYY') : '-'
+            },
+            { data: 'action', name: 'action', orderable: false, searchable: false, className: 'text-center' }
+        ];
+
+        const typeColumns = [
+            { data: 'DT_RowIndex', name: 'DT_RowIndex', orderable: false, searchable: false },
+            { data: 'product_code', name: 'product_code', defaultContent: '-' },
+            { data: 'product_name', name: 'product_name', defaultContent: '-' },
+            { data: 'type_name', name: 'type_name', defaultContent: '-' },
+            quantityColumn,
+            { data: 'unit_hpp', name: 'unit_hpp', className: 'text-end', render: renderCurrency },
+            { data: 'total_hpp', name: 'total_hpp', className: 'text-end', render: renderCurrency }
+        ];
+
+        function updateTableHeaders() {
+            const labels = typeMode
+                ? ['No', 'Kode Produk', 'Nama Produk', 'Tipe', 'Qty Terjual', 'HPP Satuan', 'Total HPP']
+                : ['No', 'No Invoice', 'Toko', 'Kasir', 'Produk', 'Qty', 'Tanggal', 'Aksi'];
+            $('#table_daily_sales thead tr').html(labels.map(label => `<th>${label}</th>`).join(''));
+        }
+
+        function updateTypeModeUi() {
+            $summarySalesCard.toggleClass('d-none', hideSales);
+            $summaryHppCard.toggleClass('d-none', hideSales);
+        }
+
+        function buildTable() {
+            const generation = ++tableGeneration;
+            updateTableHeaders();
+            if (table) {
+                const settings = table.settings()[0];
+                if (settings?.jqXHR) settings.jqXHR.abort();
+                table.clear().destroy();
+                $('#table_daily_sales tbody').empty();
+                table = null;
+            }
+
+            const tableUrl = new URL("{{ route('report.sales.today.data') }}", window.location.origin);
+            if (typeMode && $type.val()) {
+                tableUrl.searchParams.set('type_id', $type.val());
+            }
+
+            table = $('#table_daily_sales').DataTable({
+                processing: true,
+                serverSide: true,
+                ajax: {
+                    url: tableUrl.toString(),
+                    data: function (d) {
+                        d.store = $store.length ? $store.val() : '';
+                        d.cashier = $cashier.val() || '';
+                        d.type_id = $type.val() || '';
+                        d.date_from = $dateFrom.val() || '';
+                        d.date_to = $dateTo.val() || '';
+                        d.source_mode = $dataSource.val() || 'all';
+                    },
+                    dataSrc: function (json) {
+                        if (generation !== tableGeneration) return [];
+                        const expectedMode = typeMode ? 'type' : 'detail';
+                        if (json?.report_mode && json.report_mode !== expectedMode) {
+                            console.error('Mode laporan tidak sesuai:', json.report_mode, expectedMode);
+                            return [];
+                        }
+                        try {
+                            totalsFromServer = json?.totals || null;
+                            updateSummary();
+                            renderCashierButtons(json?.cashiers || []);
+                            return json?.data || [];
+                        } catch (e) {
+                            console.error('DataTables dataSrc error:', e);
+                            return [];
+                        }
+                    },
+                    error: function (xhr) {
+                        console.error('DataTables AJAX error', xhr.responseText);
+                        alert('Gagal memuat data. Silakan coba lagi.');
                     }
                 },
-                {
-                    data: 'quantity_out',
-                    name: 'quantity_out',
-                    className: 'text-end',
-                    render: (data, type) => type === 'display' || type === 'filter'
-                        ? Number(data || 0).toLocaleString('id-ID')
-                        : data
-                },
-                {
-                    data: 'activity_date',
-                    name: 'activity_date',
-                    render: (data) => data ? moment(data).format('DD MMM YYYY') : '-'
-                },
-                { data: 'action', name: 'action', orderable: false, searchable: false, className: 'text-center' }
-            ],
-            order: [], // pakai urutan dari server (latest_activity desc di controller)
-            pageLength: 25,
-            language: {
-                url: 'https://cdn.datatables.net/plug-ins/1.13.6/i18n/id.json'
-            }
-        });
+                columns: typeMode ? typeColumns : defaultColumns,
+                order: [],
+                pageLength: 25,
+                language: {
+                    url: 'https://cdn.datatables.net/plug-ins/1.13.6/i18n/id.json'
+                }
+            });
+        }
+
+        updateTypeModeUi();
+        buildTable();
 
         $store.on('change', reloadTable);
+        $type.on('change', function () {
+            const params = new URLSearchParams();
+            const storeVal = $store.length ? ($store.val() || '') : '';
+            const cashierVal = $cashier.val() || '';
+            const typeVal = $(this).val() || '';
+            const fromVal = $dateFrom.val() || '';
+            const toVal = $dateTo.val() || '';
+            const sourceMode = $dataSource.val() || 'all';
+
+            if (storeVal) params.set('store', storeVal);
+            if (cashierVal) params.set('cashier', cashierVal);
+            if (typeVal) params.set('type_id', typeVal);
+            if (fromVal) params.set('date_from', fromVal);
+            if (toVal) params.set('date_to', toVal);
+            if (sourceMode !== 'all') params.set('source_mode', sourceMode);
+
+            window.location.assign(`${window.location.pathname}?${params.toString()}`);
+        });
         $dateFrom.on('change', handleDateChange);
         $dateTo.on('change', handleDateChange);
         $cashierFilters.on('click', 'button[data-cashier-filter]', function () {
@@ -249,7 +347,7 @@
         });
 
         function reloadTable() {
-            table.ajax.reload(null, false);
+            if (table) table.ajax.reload(null, false);
             updateExportLink();
         }
 
@@ -283,8 +381,8 @@
             $('#summary_quantity').text(Number(totals.quantity || 0).toLocaleString('id-ID'));
             if (!hideSales) {
                 $('#summary_sales').text(formatCurrency(totals.sales || 0));
+                $('#summary_hpp').text(formatCurrency(totals.hpp || 0));
             }
-            $('#summary_discount').text(formatCurrency(totals.discount || 0));
             if (hideSales) {
                 $('#footer_total_sales').text('—');
             }
@@ -337,12 +435,14 @@
             const params = new URLSearchParams();
             const storeVal = $store.length ? ($store.val() || '') : '';
             const cashierVal = $cashier.val() || '';
+            const typeVal = $type.val() || '';
             const fromVal = $dateFrom.val() || '';
             const toVal = $dateTo.val() || '';
             const sourceMode = $dataSource.val() || '';
 
             if (storeVal) params.set('store', storeVal);
             if (cashierVal) params.set('cashier', cashierVal);
+            if (typeVal) params.set('type_id', typeVal);
             if (fromVal) params.set('date_from', fromVal);
             if (toVal) params.set('date_to', toVal);
             if (sourceMode) params.set('source_mode', sourceMode);
