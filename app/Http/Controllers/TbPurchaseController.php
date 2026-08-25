@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Str;
 use Yajra\DataTables\Facades\DataTables;
+use Illuminate\Validation\Rule;
 
 class TbPurchaseController extends Controller
 {
@@ -73,7 +74,7 @@ class TbPurchaseController extends Controller
             ->where('code', '!=', 'SO-ADJ')
             ->orderBy('name')
             ->get();
-        $products = tb_products::all();
+        $products = tb_products::active()->orderBy('product_name')->get();
         $stores = store_access_list(auth()->user()); 
     
      
@@ -94,7 +95,11 @@ class TbPurchaseController extends Controller
         'supplier_id' => 'required|integer|exists:tb_suppliers,id',
         'idempotency_key' => 'nullable|string|max:64',
         'products' => 'required|array|min:1',
-        'products.*.product_id' => 'required|integer|exists:tb_products,id',
+        'products.*.product_id' => [
+            'required',
+            'integer',
+            Rule::exists('tb_products', 'id')->where(fn ($query) => $query->where('is_active', 1)),
+        ],
         'products.*.stock' => 'required|integer|min:1',
         'products.*.description' => 'nullable|string',
         'supplier_budget' => 'nullable|numeric|min:0',
@@ -193,7 +198,14 @@ class TbPurchaseController extends Controller
         $purchase = tb_purchase::with(['incomingGoods.product', 'supplier', 'store'])->findOrFail($id);
         abort_unless(in_array((int) $purchase->store_id, store_access_ids(auth()->user()), true), 403);
         $suppliers = tb_suppliers::where('code', '!=', 'SO-ADJ')->orderBy('name')->get();
-        $products = tb_products::all();
+        $existingProductIds = $purchase->incomingGoods->pluck('product_id')->unique()->values();
+        $products = tb_products::query()
+            ->where(function ($query) use ($existingProductIds) {
+                $query->where('is_active', 1)
+                    ->orWhereIn('id', $existingProductIds->all());
+            })
+            ->orderBy('product_name')
+            ->get();
         $stores = store_access_list(auth()->user());
         return view('pages.admin.purchase.edit', compact('purchase', 'suppliers', 'products', 'stores'));
     }
@@ -208,11 +220,23 @@ class TbPurchaseController extends Controller
         $purchase = tb_purchase::findOrFail($id);
         abort_unless(in_array((int) $purchase->store_id, store_access_ids(auth()->user()), true), 403);
 
+        $existingProductIds = tb_incoming_goods::where('purchase_id', $purchase->id)
+            ->pluck('product_id')
+            ->unique()
+            ->values();
+
         $validated = $request->validate([
             'supplier_id' => 'required|integer|exists:tb_suppliers,id',
             'store_id' => 'required|integer|in:'.$purchase->store_id,
             'products' => 'required|array|min:1',
-            'products.*.product_id' => 'required|integer|exists:tb_products,id',
+            'products.*.product_id' => [
+                'required',
+                'integer',
+                Rule::exists('tb_products', 'id')->where(function ($query) use ($existingProductIds) {
+                    $query->where('is_active', 1)
+                        ->orWhereIn('id', $existingProductIds->all());
+                }),
+            ],
             'products.*.stock' => 'required|integer|min:1',
             'products.*.description' => 'nullable|string',
         ]);

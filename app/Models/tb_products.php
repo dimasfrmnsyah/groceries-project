@@ -21,13 +21,20 @@ class tb_products extends Model
         'selling_price',
         'product_discount',
         'description',
+        'is_active',
         'uuid',
         'tier_prices',
     ];
 
     protected $casts = [
         'tier_prices' => 'array',
+        'is_active' => 'boolean',
     ];
+
+    public function scopeActive($query)
+    {
+        return $query->where($this->getTable().'.is_active', true);
+    }
 
     public function type()
     {

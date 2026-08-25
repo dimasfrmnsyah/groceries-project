@@ -11,6 +11,7 @@ use App\Models\tb_stores;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
 
 class StockTransferController extends Controller
 {
@@ -18,7 +19,7 @@ class StockTransferController extends Controller
     {
         $user = $request->user();
         $stores = store_access_list($user);
-        $products = tb_products::orderBy('product_name')->get();
+        $products = tb_products::active()->orderBy('product_name')->get();
         $transfers = DB::table('tb_stock_transfers as tr')
             ->join('tb_products as p', 'p.id', '=', 'tr.product_id')
             ->join('tb_stores as fs', 'fs.id', '=', 'tr.from_store_id')
@@ -44,7 +45,11 @@ class StockTransferController extends Controller
 
         $data = $request->validate([
             'date' => 'required|date',
-            'product_id' => 'required|integer|exists:tb_products,id',
+            'product_id' => [
+                'required',
+                'integer',
+                Rule::exists('tb_products', 'id')->where(fn ($query) => $query->where('is_active', 1)),
+            ],
             'from_store_id' => 'required|integer|different:to_store_id|exists:tb_stores,id',
             'to_store_id' => 'required|integer|exists:tb_stores,id',
             'quantity' => 'required|integer|min:1|max:10000',
@@ -72,7 +77,7 @@ class StockTransferController extends Controller
                 throw new \InvalidArgumentException('Stok toko asal tidak cukup. Stok tersedia: '.$stock);
             }
 
-            $product = tb_products::findOrFail($data['product_id']);
+            $product = tb_products::active()->findOrFail($data['product_id']);
             $date = $data['date'];
             $qty = (int) $data['quantity'];
 

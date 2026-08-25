@@ -107,6 +107,7 @@ class InventoryController extends Controller
                 $join->on('so.product_id', '=', 'pr.id')
                      ->where('so.store_id', '=', $storeId);
             })
+            ->where('pr.is_active', 1)
             ->select(
                 'pr.id as product_id',
                 'pr.product_code',
@@ -649,9 +650,12 @@ class InventoryController extends Controller
             $storeIds[$storeId] = true;
         }
 
-        $existingProducts = DB::table('tb_products')->whereIn('id', array_keys($productIds))->count();
+        $existingProducts = DB::table('tb_products')
+            ->whereIn('id', array_keys($productIds))
+            ->where('is_active', 1)
+            ->count();
         if ($existingProducts !== count($productIds)) {
-            throw new \InvalidArgumentException('Terdapat produk yang tidak ditemukan.');
+            throw new \InvalidArgumentException('Terdapat produk yang tidak ditemukan atau sudah inactive.');
         }
 
         $existingStores = DB::table('tb_stores')->whereIn('id', array_keys($storeIds))->count();
@@ -730,7 +734,8 @@ class InventoryController extends Controller
         $rowsProduct = DB::select(
             'SELECT id, product_code, product_name
                FROM tb_products
-              WHERE id IN ('.$ph(count($productIds)).')',
+              WHERE is_active = 1
+                AND id IN ('.$ph(count($productIds)).')',
             $productIds
         );
         $products = [];
@@ -746,7 +751,8 @@ class InventoryController extends Controller
                FROM tb_products p
                LEFT JOIN tb_product_store_prices sp
                  ON sp.product_id = p.id AND sp.store_id = ?
-              WHERE p.id IN ('.$ph(count($productIds)).')',
+              WHERE p.is_active = 1
+                AND p.id IN ('.$ph(count($productIds)).')',
             array_merge([$storeId], $productIds)
         );
         $prices = [];

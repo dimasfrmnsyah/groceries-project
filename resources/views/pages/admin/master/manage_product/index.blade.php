@@ -2,6 +2,37 @@
 
 @section('css')
   <link href="{{ asset('assets/plugins/datatable/css/dataTables.bootstrap5.min.css') }}" rel="stylesheet" />
+  <style>
+    .product-status-control {
+      min-width: 108px;
+    }
+
+    .product-status-control .form-check-input {
+      width: 2.35rem;
+      height: 1.25rem;
+      margin-top: 0;
+      cursor: pointer;
+    }
+
+    .product-status-control .form-check-input:checked {
+      background-color: #16a34a;
+      border-color: #16a34a;
+    }
+
+    .product-status-control .status-label {
+      min-width: 52px;
+      font-size: .75rem;
+      font-weight: 600;
+    }
+
+    .product-status-control .status-label.is-active {
+      color: #15803d;
+    }
+
+    .product-status-control .status-label.is-inactive {
+      color: #64748b;
+    }
+  </style>
 @endsection
 
 @section('content')
@@ -38,7 +69,8 @@
               <th>Harga Beli</th>     {{-- diperbaiki urutannya --}}
               <th>Harga Jual</th>
               <th>Harga Tier</th>     {{-- kolom baru --}}
-              <th>Keterangan</th>
+              <th>Diskon</th>
+              <th>Status</th>
               <th>Aksi</th>
             </tr>
           </thead>
@@ -142,6 +174,30 @@
       },
       { data: 'product_discount', render: v => v!=null ? idr.format(v) : '-' },
       {
+        data: 'is_active', orderable:false, searchable:false,
+        render: function (value, type, row) {
+          const isActive = Number(value) === 1;
+          const label = isActive ? 'Aktif' : 'Inactive';
+          const labelClass = isActive ? 'is-active' : 'is-inactive';
+
+          return `
+            <div class="product-status-control d-flex align-items-center gap-2">
+              <div class="form-check form-switch m-0">
+                <input
+                  class="form-check-input js-product-status-toggle"
+                  type="checkbox"
+                  role="switch"
+                  data-product-id="${row.id}"
+                  ${isActive ? 'checked' : ''}
+                  aria-label="Ubah status ${$('<div>').text(row.product_name || 'produk').html()}"
+                >
+              </div>
+              <span class="status-label ${labelClass}">${label}</span>
+            </div>
+          `;
+        }
+      },
+      {
         data: 'action', orderable:false, searchable:false,
         render: function (html, type, row) {
           if (html) return html;
@@ -164,6 +220,52 @@
     });
     searchInput.focus();
   }
+
+  $('#table-brand').on('change', '.js-product-status-toggle', function () {
+    const toggle = this;
+    const productId = toggle.dataset.productId;
+    const desiredStatus = toggle.checked ? 1 : 0;
+    const label = $(toggle).closest('.product-status-control').find('.status-label');
+    const token = $("meta[name='csrf-token']").attr('content');
+
+    toggle.disabled = true;
+
+    $.ajax({
+      url: `/master-product/${productId}/toggle-status`,
+      type: 'PATCH',
+      data: {
+        _token: token,
+        is_active: desiredStatus,
+      },
+      success: function (response) {
+        const savedStatus = Number(response.is_active) === 1;
+        label
+          .text(savedStatus ? 'Aktif' : 'Inactive')
+          .toggleClass('is-active', savedStatus)
+          .toggleClass('is-inactive', !savedStatus);
+
+        Swal.fire({
+          toast: true,
+          position: 'top-end',
+          icon: 'success',
+          title: response.message || 'Status produk diperbarui',
+          showConfirmButton: false,
+          timer: 1800,
+        });
+      },
+      error: function (error) {
+        toggle.checked = !desiredStatus;
+        Swal.fire({
+          icon: 'error',
+          title: 'Status gagal diperbarui',
+          text: error.responseJSON?.message || 'Silakan coba lagi.',
+        });
+      },
+      complete: function () {
+        toggle.disabled = false;
+      },
+    });
+  });
 });
 
   </script>

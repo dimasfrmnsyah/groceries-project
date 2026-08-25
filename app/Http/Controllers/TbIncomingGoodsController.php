@@ -235,6 +235,7 @@ class TbIncomingGoodsController extends Controller
         $stockExpression = '(COALESCE(incoming.total_in, 0) - COALESCE(outgoing.total_out, 0))';
 
         return DB::table('tb_products as p')
+            ->where('p.is_active', 1)
             ->leftJoinSub($incomingSub, 'incoming', fn ($join) => $join->on('incoming.product_id', '=', 'p.id'))
             ->leftJoinSub($outgoingSub, 'outgoing', fn ($join) => $join->on('outgoing.product_id', '=', 'p.id'))
             ->leftJoin('tb_units as u', 'u.id', '=', 'p.unit_id')

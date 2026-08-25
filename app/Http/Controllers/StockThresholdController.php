@@ -127,6 +127,7 @@ class StockThresholdController extends Controller
         $excludeStockOpname($avgSalesSub);
 
         $rows = DB::table('tb_products as p')
+            ->where('p.is_active', 1)
             ->leftJoin('tb_product_store_thresholds as st', function ($join) use ($storeId) {
                 $join->on('st.product_id', '=', 'p.id')
                      ->where('st.store_id', '=', $storeId);
@@ -172,6 +173,19 @@ class StockThresholdController extends Controller
         $expectedCount = (int) $request->input('expected_count', 0);
         if ($expectedCount > 0 && count($items) < $expectedCount) {
             return back()->with('error', 'Koneksi tidak stabil. Data yang diterima tidak lengkap, silakan simpan ulang.');
+        }
+
+        $productIds = collect(array_keys($items))
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values();
+        $activeProductCount = DB::table('tb_products')
+            ->whereIn('id', $productIds->all())
+            ->where('is_active', 1)
+            ->count();
+        if ($activeProductCount !== $productIds->count()) {
+            return back()->with('error', 'Threshold hanya dapat diatur untuk produk aktif.');
         }
 
         DB::beginTransaction();

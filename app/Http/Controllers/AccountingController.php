@@ -10,6 +10,7 @@ use App\Models\tb_suppliers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
 
 class AccountingController extends Controller
 {
@@ -320,7 +321,7 @@ class AccountingController extends Controller
         $this->authorizeStockMovementManager();
         return view('pages.admin.accounting.receivable-form', $this->formData([
             'customers' => tb_customers::orderBy('customer_name')->get(),
-            'products' => tb_products::orderBy('product_name')->get(),
+            'products' => tb_products::active()->orderBy('product_name')->get(),
             'mode' => 'create',
             'row' => null,
         ]));
@@ -713,7 +714,11 @@ class AccountingController extends Controller
             'date' => 'required|date',
             'store_id' => 'required|integer|exists:tb_stores,id',
             'customer_id' => 'nullable|integer|exists:tb_customers,id',
-            'product_id' => 'required|integer|exists:tb_products,id',
+            'product_id' => [
+                'required',
+                'integer',
+                Rule::exists('tb_products', 'id')->where(fn ($query) => $query->where('is_active', 1)),
+            ],
             'quantity' => 'required|integer|min:1',
             'amount' => 'required|numeric|min:0',
             'description' => 'nullable|string|max:255',
@@ -730,7 +735,11 @@ class AccountingController extends Controller
             'entries' => 'required|array|min:1|max:100',
             'entries.*.date' => 'required|date',
             'entries.*.customer_id' => 'nullable|integer|exists:tb_customers,id',
-            'entries.*.product_id' => 'required|integer|exists:tb_products,id',
+            'entries.*.product_id' => [
+                'required',
+                'integer',
+                Rule::exists('tb_products', 'id')->where(fn ($query) => $query->where('is_active', 1)),
+            ],
             'entries.*.quantity' => 'required|integer|min:1',
             'entries.*.amount' => 'required|numeric|min:0',
             'entries.*.description' => 'nullable|string|max:255',

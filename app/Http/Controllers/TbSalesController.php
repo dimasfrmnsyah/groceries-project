@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Database\QueryException;
+use Illuminate\Validation\Rule;
 
 class TbSalesController extends Controller
 {
@@ -73,7 +74,11 @@ class TbSalesController extends Controller
             'idempotency_key' => 'nullable|string|max:64',
             'no_invoice' => 'nullable|string|max:80',
             'products' => 'required|array|min:1',
-            'products.*.id' => 'required|integer|exists:tb_products,id',
+            'products.*.id' => [
+                'required',
+                'integer',
+                Rule::exists('tb_products', 'id')->where(fn ($query) => $query->where('is_active', 1)),
+            ],
             'products.*.qty' => 'required|integer|min:1|max:100000',
         ]);
 
@@ -139,6 +144,7 @@ class TbSalesController extends Controller
                 // tetap menjadi serialisasi utama untuk seluruh movement toko.
                 $products = tb_products::with('storePrices')
                     ->whereIn('id', $productIds)
+                    ->where('is_active', 1)
                     ->lockForUpdate()
                     ->get()
                     ->keyBy('id');
@@ -364,6 +370,7 @@ class TbSalesController extends Controller
         $stockExpression = '(COALESCE(incoming.total_in, 0) - COALESCE(outgoing.total_out, 0))';
 
         return DB::table('tb_products as p')
+            ->where('p.is_active', 1)
             ->leftJoinSub($incomingSub, 'incoming', fn ($join) => $join->on('incoming.product_id', '=', 'p.id'))
             ->leftJoinSub($outgoingSub, 'outgoing', fn ($join) => $join->on('outgoing.product_id', '=', 'p.id'))
             ->whereIn('p.id', $productIds)

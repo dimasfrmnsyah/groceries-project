@@ -109,6 +109,16 @@
               <textarea name="description" class="form-control">{{ old('description', $product->description ?? '') }}</textarea>
             </div>
 
+            <div class="col-md-4">
+              <label class="form-label">Status Produk</label>
+              <select name="is_active" class="form-select" required>
+                <option value="1" @selected((int) old('is_active', $product->is_active ?? 1) === 1)>Aktif</option>
+                <option value="0" @selected((int) old('is_active', $product->is_active ?? 1) === 0)>Inactive</option>
+              </select>
+              <small class="text-muted">Produk inactive tidak muncul pada proses stok baru.</small>
+              @error('is_active') <div class="text-danger small">{{ $message }}</div> @enderror
+            </div>
+
             @if(!empty($stores))
             <div class="col-12"><hr></div>
             <div class="col-12">

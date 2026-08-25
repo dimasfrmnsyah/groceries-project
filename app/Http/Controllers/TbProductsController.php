@@ -30,6 +30,7 @@ class TbProductsController extends Controller
                 p.purchase_price,
                 p.selling_price,
                 p.tier_prices,
+                p.is_active,
                 COALESCE(p.description, "-") as description
             ')
             ->orderByDesc('p.id')
@@ -43,6 +44,23 @@ class TbProductsController extends Controller
 
     return view('pages.admin.master.manage_product.index');
 }
+
+    public function toggleStatus(Request $request, $id)
+    {
+        $data = $request->validate([
+            'is_active' => ['required', 'boolean'],
+        ]);
+
+        $product = tb_products::findOrFail($id);
+        $product->update([
+            'is_active' => (int) $data['is_active'],
+        ]);
+
+        return response()->json([
+            'message' => 'Status produk berhasil diperbarui.',
+            'is_active' => (bool) $product->fresh()->is_active,
+        ]);
+    }
 
     public function create()
     {
@@ -78,6 +96,7 @@ class TbProductsController extends Controller
         'selling_price'    => 'required|numeric|min:0',
         'product_discount' => 'nullable|numeric|min:0',
         'description'      => 'nullable|string',
+        'is_active'        => 'nullable|boolean',
         'tier_prices'          => 'nullable|array',
         'tier_prices.*.qty'    => 'required|integer|min:1',
         'tier_prices.*.price'  => 'required|numeric|min:0',
@@ -97,6 +116,8 @@ class TbProductsController extends Controller
         ksort($map);
         $data['tier_prices'] = $map;
     }
+
+    $data['is_active'] = (int) ($data['is_active'] ?? 1);
 
     DB::beginTransaction();
     try {
@@ -143,6 +164,7 @@ class TbProductsController extends Controller
         'selling_price'    => 'required|numeric|min:0',
         'product_discount' => 'nullable|numeric|min:0',
         'description'      => 'nullable|string',
+        'is_active'        => 'nullable|boolean',
         'tier_prices'          => 'nullable|array',
         'tier_prices.*.qty'    => 'required|integer|min:1',
         'tier_prices.*.price'  => 'required|numeric|min:0',
@@ -163,6 +185,8 @@ class TbProductsController extends Controller
     } else {
         $data['tier_prices'] = null; // benar-benar kosong
     }
+
+    $data['is_active'] = (int) ($data['is_active'] ?? 1);
 
     DB::beginTransaction();
     try {

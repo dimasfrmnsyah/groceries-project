@@ -76,8 +76,8 @@
                                     <select id="product-input" class="form-control select2">
                                         <option value="">Pilih Produk</option>
                                         @foreach($products as $product)
-                                            <option value="{{ $product->id }}" data-price="{{ $product->purchase_price }}" data-code="{{ $product->product_code }}">
-                                                [{{ $product->product_code }}] {{ $product->product_name }}
+                                            <option value="{{ $product->id }}" data-price="{{ $product->purchase_price }}" data-code="{{ $product->product_code }}" @disabled(!$product->is_active)>
+                                                [{{ $product->product_code }}] {{ $product->product_name }}{{ !$product->is_active ? ' (Inactive - data lama)' : '' }}
                                             </option>
                                         @endforeach
                                     </select>

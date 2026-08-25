@@ -151,6 +151,7 @@ class ProductStockController extends Controller
             ->groupBy('og.product_id');
 
         return DB::table('tb_products as p')
+            ->where('p.is_active', 1)
             ->leftJoinSub($incomingSub, 'incoming', fn($join) => $join->on('incoming.product_id', '=', 'p.id'))
             ->leftJoinSub($outgoingSub, 'outgoing', fn($join) => $join->on('outgoing.product_id', '=', 'p.id'))
             ->select(

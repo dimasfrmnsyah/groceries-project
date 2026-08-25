@@ -76,6 +76,7 @@ class ItemMovingController extends Controller
         $stockSub = $this->stockSub($storeId);
 
         $rows = DB::table('tb_products as p')
+            ->where('p.is_active', 1)
             ->leftJoin('tb_product_store_thresholds as th', function ($join) use ($storeId) {
                 $join->on('th.product_id', '=', 'p.id')->where('th.store_id', '=', $storeId);
             })

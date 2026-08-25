@@ -96,6 +96,7 @@ Route::get('/sync/manual', [SyncController::class, 'manual'])->name('sync.manual
     Route::prefix('master-product')->group(function () {
         Route::get('/', [TbProductsController::class, 'index'])->name('master-product.index');
         Route::get('/create', [TbProductsController::class, 'create'])->name('master-product.create');
+        Route::patch('/{id}/toggle-status', [TbProductsController::class, 'toggleStatus'])->name('master-product.toggle-status');
         Route::get('/{id}', [TbProductsController::class, 'show'])->name('master-product.show');
         Route::get('/edit/{id}', [TbProductsController::class, 'edit'])->name('master-product.edit');
         Route::post('/store', [TbProductsController::class, 'store'])->name('master-product.store');

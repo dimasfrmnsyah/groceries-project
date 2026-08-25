@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Schema;
 use Maatwebsite\Excel\Facades\Excel;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use App\Exports\OrderStockExport;
+use Illuminate\Validation\Rule;
 
 class OrderStockController extends Controller
 {
@@ -94,7 +95,12 @@ class OrderStockController extends Controller
 
         $request->validate([
             'items' => 'required|array|max:1000',
-            'items.*' => 'required|integer|distinct|exists:tb_products,id',
+            'items.*' => [
+                'required',
+                'integer',
+                'distinct',
+                Rule::exists('tb_products', 'id')->where(fn ($query) => $query->where('is_active', 1)),
+            ],
             'po_qty' => 'nullable|array',
             'po_qty.*' => 'nullable|integer|min:0|max:10000',
         ]);
@@ -348,6 +354,7 @@ class OrderStockController extends Controller
             ->groupBy('og.product_id');
 
         return DB::table('tb_products as p')
+            ->where('p.is_active', 1)
             ->join('tb_product_store_thresholds as st', function ($join) use ($storeId) {
                 $join->on('st.product_id', '=', 'p.id')
                      ->where('st.store_id', '=', $storeId);

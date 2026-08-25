@@ -99,6 +99,7 @@ class AppServiceProvider extends ServiceProvider
             ->groupBy('og.product_id');
 
         return DB::table('tb_products as p')
+            ->where('p.is_active', 1)
             ->join('tb_product_store_thresholds as sp', function ($join) use ($storeId) {
                 $join->on('sp.product_id', '=', 'p.id')
                      ->where('sp.store_id', '=', $storeId);
