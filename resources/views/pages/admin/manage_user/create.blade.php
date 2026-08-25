@@ -37,6 +37,26 @@
         <div class="text-danger">{{ $message }}</div>
       @enderror
         </div>
+        <div class="col-6 mb-3 d-none" id="cashier-lock-wrap">
+          <label for="is-lock">Lock Pendapatan Kasir</label>
+          <div class="form-check form-switch mt-2">
+            @php
+              $isLockChecked = (int) old('is_lock', isset($user) ? ($user->is_lock ? 1 : 0) : 0) === 1;
+            @endphp
+            <input class="form-check-input"
+                   type="checkbox"
+                   role="switch"
+                   name="is_lock"
+                   value="1"
+                   id="is-lock"
+                   {{ $isLockChecked ? 'checked' : '' }}>
+            <label class="form-check-label" for="is-lock">Wajib cocok dengan total penjualan sebelum logout</label>
+          </div>
+          <small class="text-muted">Pengaturan ini hanya berlaku untuk role staff/kasir/cashier.</small>
+          @error('is_lock')
+            <div class="text-danger">{{ $message }}</div>
+          @enderror
+        </div>
         <div class="col-6 mb-3">
           <label for="name">Email</label>
           <input class="form-control" type="email" name="email"
@@ -189,6 +209,8 @@
     const storeSingleSelect = document.getElementById('store-single');
     const storeCheckboxes = document.querySelectorAll('.store-checkbox');
     const storeHelp = document.getElementById('store-help');
+    const cashierLockWrap = document.getElementById('cashier-lock-wrap');
+    const cashierLockInput = document.getElementById('is-lock');
 
     const setStoreMode = (role) => {
       if (!storeHelp || !storeMultiWrap || !storeSingleWrap || !storeSingleSelect) return;
@@ -196,6 +218,12 @@
       const isStaff = ['staff', 'kasir', 'cashier'].includes(normalized);
       const isSuperadmin = normalized === 'superadmin';
       const canUseMultipleStores = normalized !== '' && !isStaff && !isSuperadmin;
+
+      if (cashierLockWrap && cashierLockInput) {
+        cashierLockWrap.classList.toggle('d-none', !isStaff);
+        cashierLockInput.disabled = !isStaff;
+        if (!isStaff) cashierLockInput.checked = false;
+      }
 
       if (isSuperadmin) {
         storeMultiWrap.classList.add('d-none');

@@ -35,6 +35,7 @@
                             <th>Nama User</th>
                             <th>Email</th>
                             <th>Role</th>
+                            <th>Lock Pendapatan</th>
                             <th>Store</th>
                             <th>Aksi</th>
                         </tr>
@@ -121,6 +122,17 @@
                 {data:'name', name:'name'},
                 {data:'email', name:'email'},
                 {data:'roles', name:'roles'},
+                {
+                    data: 'is_lock',
+                    name: 'is_lock',
+                    orderable: false,
+                    searchable: false,
+                    render: function(data) {
+                        return Number(data) === 1
+                            ? '<span class="badge bg-warning text-dark">Locked</span>'
+                            : '<span class="badge bg-light text-secondary border">Tidak</span>';
+                    }
+                },
                 {data:'store_names', name:'store_names', defaultContent: '-',},
                 {data: 'action', name: 'action', orderable: false, searchable: false, className:'text-end'}
 

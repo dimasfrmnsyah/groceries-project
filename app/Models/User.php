@@ -26,6 +26,7 @@ class User extends Authenticatable
         'password',
         'roles',
         'store_id',
+        'is_lock',
         'uuid'
     ];
 
@@ -47,6 +48,7 @@ class User extends Authenticatable
     protected $casts = [
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
+        'is_lock' => 'boolean',
     ];
 
 

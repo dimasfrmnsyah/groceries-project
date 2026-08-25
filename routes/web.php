@@ -57,13 +57,8 @@ Route::group(['middleware' => ['auth']], function () {
     Route::get('/', [HomeController::class, 'index'])->name('home');
     Route::post('/staff/logout-revenue', [StaffController::class, 'submitRevenueAndLogout'])->name('staff.submitRevenueAndLogout');
 
-    Route::get('/check-daily-revenue', function (Request $request) {
-        return response()->json([
-            'exists' => \App\Models\tb_daily_revenues::where('user_id', auth()->id())
-                ->where('date', $request->get('date'))
-                ->exists()
-        ]);
-    });
+    Route::get('/check-daily-revenue', [StaffController::class, 'checkDailyRevenue'])
+        ->name('staff.checkDailyRevenue');
     Route::get('/export-penjualan', [App\Http\Controllers\HomeController::class, 'exportPenjualan'])->name('home.export.penjualan');
 Route::get('/sync/manual', [SyncController::class, 'manual'])->name('sync.manual');
 

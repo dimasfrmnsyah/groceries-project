@@ -93,6 +93,7 @@ class TbUserController extends Controller
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|min:8|confirmed',
             'roles' => ['required', Rule::in($this->assignableRoles())],
+            'is_lock' => ['nullable', 'boolean'],
             'store_id' => 'nullable|integer|exists:tb_stores,id',
             'store_ids' => 'nullable|array',
             'store_ids.*' => 'integer|exists:tb_stores,id',
@@ -108,6 +109,9 @@ class TbUserController extends Controller
         }
 
         $role = strtolower((string) $data['roles']);
+        $data['is_lock'] = $this->isCashierRole($role)
+            ? (int) $request->boolean('is_lock')
+            : 0;
         $actor = auth()->user();
         if ($actor && strtolower((string) $actor->roles) !== 'superadmin') {
             $allowed = store_access_ids($actor);
@@ -200,6 +204,7 @@ class TbUserController extends Controller
             'name' => 'required',
             'email' => 'required|string|email|max:255|unique:users,email,' . $id,
             'roles' => ['required', Rule::in($this->assignableRoles($user->roles))],
+            'is_lock' => ['nullable', 'boolean'],
             'store_id' => 'nullable|integer|exists:tb_stores,id',
             'store_ids' => 'nullable|array',
             'store_ids.*' => 'integer|exists:tb_stores,id',
@@ -215,6 +220,9 @@ class TbUserController extends Controller
         }
 
         $role = strtolower((string) $data['roles']);
+        $data['is_lock'] = $this->isCashierRole($role)
+            ? (int) $request->boolean('is_lock')
+            : 0;
         $actor = auth()->user();
         if ($actor && strtolower((string) $actor->roles) !== 'superadmin') {
             $allowed = store_access_ids($actor);
@@ -371,6 +379,11 @@ class TbUserController extends Controller
     private function assignableRoles(?string $currentRole = null): array
     {
         return $this->availableRoles($currentRole)->all();
+    }
+
+    private function isCashierRole(?string $role): bool
+    {
+        return in_array(strtolower(trim((string) $role)), ['staff', 'kasir', 'cashier'], true);
     }
 
     private function authorizeUserManager(): void

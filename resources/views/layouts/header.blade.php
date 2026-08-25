@@ -9,6 +9,7 @@
                         @php
                             $roleHeader = strtolower(Auth::user()->roles ?? '');
                             $requiresRevenueLogout = in_array($roleHeader, ['staff', 'kasir', 'cashier'], true);
+                            $revenueLockEnabled = $requiresRevenueLogout && (bool) (Auth::user()->is_lock ?? false);
                             $userStoreId = Auth::user()->store_id ?? null;
                             $userStoreName = optional(Auth::user()->store)->store_name ?? '-';
                             $userStoreOnline = optional(Auth::user()->store)->is_online ?? false;
@@ -113,7 +114,10 @@
     @if(Auth::check() && in_array(strtolower(Auth::user()->roles ?? ''), ['staff', 'kasir', 'cashier'], true))
     <div class="modal fade" id="revenueModal" tabindex="-1" aria-labelledby="revenueModalLabel" aria-hidden="true">
         <div class="modal-dialog">
-            <form id="revenueForm" method="POST" action="{{ route('staff.submitRevenueAndLogout') }}">
+            <form id="revenueForm"
+                  method="POST"
+                  action="{{ route('staff.submitRevenueAndLogout') }}"
+                  data-revenue-locked="{{ $revenueLockEnabled ? '1' : '0' }}">
                 @csrf
                 <div class="modal-content">
                     <div class="modal-header">
@@ -121,10 +125,34 @@
                     </div>
                     <div class="modal-body">
                         <label for="amount">Masukkan pendapatan Anda hari ini:</label>
-                        <input type="number" name="amount" id="amount" class="form-control" required min="0" autofocus>
+                        <input type="number"
+                               name="amount"
+                               id="amount"
+                               class="form-control"
+                               required
+                               min="0"
+                               step="0.01"
+                               inputmode="decimal"
+                               value="{{ old('amount') }}"
+                               autofocus>
+                        @if($revenueLockEnabled)
+                            <div class="mt-3 rounded border border-warning-subtle bg-warning-subtle p-3">
+                                <div id="revenueValidationMessage" class="small mt-1 text-danger">
+                                    Tombol logout aktif setelah nominal sama persis.
+                                </div>
+                            </div>
+                        @endif
+                        @if(session('revenue_error'))
+                            <div class="alert alert-danger mt-3 mb-0">{{ session('revenue_error') }}</div>
+                        @endif
                     </div>
                     <div class="modal-footer">
-                        <button type="submit" class="btn btn-primary">Submit & Logout</button>
+                        <button type="submit"
+                                id="revenueSubmitButton"
+                                class="btn btn-primary"
+                                {{ $revenueLockEnabled ? 'disabled' : '' }}>
+                            Submit & Logout
+                        </button>
                     </div>
                 </div>
             </form>
@@ -136,10 +164,72 @@
 {{-- Script Modal Logout Staff --}}
 @if(Auth::check() && in_array(strtolower(Auth::user()->roles ?? ''), ['staff', 'kasir', 'cashier'], true))
     <script>
+        const revenueForm = document.getElementById('revenueForm');
+        const revenueAmountInput = document.getElementById('amount');
+        const revenueSubmitButton = document.getElementById('revenueSubmitButton');
+        const revenueValidationMessage = document.getElementById('revenueValidationMessage');
+        const revenueLocked = revenueForm?.dataset.revenueLocked === '1';
+        let revenueValidationTimer = null;
+
+        const validateRevenueAmount = () => {
+            if (!revenueLocked || !revenueAmountInput || !revenueSubmitButton) return;
+
+            revenueSubmitButton.disabled = true;
+            if (revenueValidationMessage) {
+                revenueValidationMessage.textContent = 'Memeriksa nominal...';
+                revenueValidationMessage.className = 'small mt-1 text-muted';
+            }
+
+            const url = new URL("{{ route('staff.checkDailyRevenue') }}", window.location.origin);
+            if (revenueAmountInput.value !== '') {
+                url.searchParams.set('amount', revenueAmountInput.value);
+            }
+
+            fetch(url.toString(), {
+                method: 'GET',
+                credentials: 'same-origin',
+                headers: { 'Accept': 'application/json' },
+            })
+                .then(async (response) => {
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok) throw new Error(payload.message || 'Validasi pendapatan gagal.');
+
+                    const matches = payload.matches === true;
+                    revenueSubmitButton.disabled = !matches;
+                    if (revenueValidationMessage) {
+                        revenueValidationMessage.textContent = matches
+                            ? 'Nominal sudah sesuai dengan total penjualan sistem.'
+                            : 'Nominal belum sesuai. Submit & Logout masih dikunci.';
+                        revenueValidationMessage.className = matches
+                            ? 'small mt-1 text-success'
+                            : 'small mt-1 text-danger';
+                    }
+                })
+                .catch((error) => {
+                    revenueSubmitButton.disabled = true;
+                    if (revenueValidationMessage) {
+                        revenueValidationMessage.textContent = error.message;
+                        revenueValidationMessage.className = 'small mt-1 text-danger';
+                    }
+                });
+        };
+
+        if (revenueLocked && revenueAmountInput) {
+            revenueAmountInput.addEventListener('input', () => {
+                window.clearTimeout(revenueValidationTimer);
+                revenueValidationTimer = window.setTimeout(validateRevenueAmount, 250);
+            });
+            document.getElementById('revenueModal')?.addEventListener('shown.bs.modal', validateRevenueAmount);
+        }
+
         function showRevenueModal() {
             const modal = new bootstrap.Modal(document.getElementById('revenueModal'));
             modal.show();
         }
+
+        @if(session('revenue_error'))
+            document.addEventListener('DOMContentLoaded', () => showRevenueModal());
+        @endif
     </script>
 @endif
 
