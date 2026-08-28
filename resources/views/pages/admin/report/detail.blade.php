@@ -26,23 +26,42 @@
       ? $revenue->denominations
       : (json_decode((string) ($revenue->denominations ?? ''), true) ?: []);
   $revenueDenominationOptions = \App\Support\CashDenominations::all();
+  $revenuePhysicalCash = 0;
+  foreach ($revenueDenominationOptions as $key => $option) {
+      $revenuePhysicalCash += (int) ($revenueDenominations[$key] ?? 0) * (int) $option['value'];
+  }
 @endphp
 @if($revenueDenominations)
 <div class="card mb-3">
   <div class="card-body">
-    <h6 class="mb-3 text-uppercase">Rincian Uang Saat Logout</h6>
+    <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
+      <h6 class="mb-0 text-uppercase">Rincian Uang Saat Logout</h6>
+      <span class="badge bg-light text-dark border">Uang fisik: Rp {{ number_format($revenuePhysicalCash, 0, ',', '.') }}</span>
+    </div>
     <div class="row g-2">
       @foreach($revenueDenominationOptions as $key => $option)
-        @if((int) ($revenueDenominations[$key] ?? 0) > 0)
-          <div class="col-md-4 col-sm-6">
-            <div class="border rounded p-2 d-flex justify-content-between gap-2">
-              <span>{{ $option['label'] }}</span>
-              <strong>{{ number_format((int) $revenueDenominations[$key], 0, ',', '.') }}</strong>
+        @php
+          $count = (int) ($revenueDenominations[$key] ?? 0);
+          $subtotal = $count * (int) $option['value'];
+          $unit = $option['kind'] === 'Uang kertas' ? 'lembar' : 'keping';
+        @endphp
+        <div class="col-md-4 col-sm-6">
+          <div class="border rounded p-2 d-flex justify-content-between align-items-center gap-2">
+            <div>
+              <div class="fw-semibold">{{ $option['label'] }}</div>
+              <small class="text-muted">{{ number_format($subtotal, 0, ',', '.') }}</small>
             </div>
+            <strong>{{ number_format($count, 0, ',', '.') }} {{ $unit }}</strong>
           </div>
-        @endif
+        </div>
       @endforeach
     </div>
+  </div>
+</div>
+@else
+<div class="card mb-3">
+  <div class="card-body text-muted">
+    Rincian denomination tidak tersimpan pada input pendapatan ini. Kemungkinan merupakan data lama sebelum fitur denomination digunakan.
   </div>
 </div>
 @endif

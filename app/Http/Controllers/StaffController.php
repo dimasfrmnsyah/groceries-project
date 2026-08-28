@@ -137,9 +137,12 @@ class StaffController extends Controller
 
     private function validateDenominations(?string $payload, ?array $fallback = null): array
     {
-        $submitted = trim((string) $payload) !== ''
-            ? json_decode((string) $payload, true)
-            : $fallback;
+        // Field denominations[] adalah sumber utama karena dikirim langsung
+        // oleh form. Payload hidden hanya fallback untuk browser lama; jika
+        // payload stale berisi nol, input kasir tidak boleh tertimpa.
+        $submitted = is_array($fallback)
+            ? $fallback
+            : (trim((string) $payload) !== '' ? json_decode((string) $payload, true) : null);
         if (!is_array($submitted)) {
             throw \Illuminate\Validation\ValidationException::withMessages([
                 'denominations_payload' => 'Rincian pecahan uang tidak valid.',
