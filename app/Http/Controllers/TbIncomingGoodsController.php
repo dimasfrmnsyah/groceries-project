@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use App\Support\StockLedger;
 use Yajra\DataTables\Facades\DataTables;
 
 class TbIncomingGoodsController extends Controller
@@ -216,6 +217,7 @@ class TbIncomingGoodsController extends Controller
                        ->orWhere('ig.is_pending_stock', 0);
                 });
             })
+            ->whereBetween('ig.stock', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->select('ig.product_id', DB::raw('SUM(ig.stock) as total_in'))
             ->groupBy('ig.product_id');
 
@@ -229,6 +231,7 @@ class TbIncomingGoodsController extends Controller
                        ->orWhere('og.is_pending_stock', 0);
                 });
             })
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->select('og.product_id', DB::raw('SUM(og.quantity_out) as total_out'))
             ->groupBy('og.product_id');
 

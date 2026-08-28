@@ -11,6 +11,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
+use App\Support\StockLedger;
+use App\Support\CashDenominations;
 
 class AccountingController extends Controller
 {
@@ -986,6 +988,7 @@ class AccountingController extends Controller
                 });
             })
             ->where('ig.product_id', $productId)
+            ->whereBetween('ig.stock', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->sum('ig.stock');
 
         $outgoing = DB::table('tb_outgoing_goods as og')
@@ -999,6 +1002,7 @@ class AccountingController extends Controller
             })
             ->where('s.store_id', $storeId)
             ->where('og.product_id', $productId)
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->sum('og.quantity_out');
 
         return max(0, (int) $incoming - (int) $outgoing);
@@ -1039,6 +1043,7 @@ class AccountingController extends Controller
             ->when(Schema::hasColumn('tb_outgoing_goods', 'deleted_at'), fn ($q) => $q->whereNull('og.deleted_at'))
             ->where('s.store_id', $storeId)
             ->whereDate('s.date', $audit->toDateString())
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->whereRaw('LOWER(TRIM(og.recorded_by)) = ?', [strtolower(trim($cashierName))]);
 
         if (Schema::hasColumn('tb_sells', 'created_at')) {
@@ -1065,13 +1070,29 @@ class AccountingController extends Controller
     {
         $storeIds = $this->stores()->pluck('id')->map(fn ($id) => (int) $id)->all();
 
+        $hasSellerIdColumn = Schema::hasColumn('tb_sells', 'seller_id');
+        $hasInvoiceColumn = Schema::hasColumn('tb_sells', 'no_invoice');
+
         $options = DB::table('tb_outgoing_goods as og')
             ->join('tb_sells as s', 's.id', '=', 'og.sell_id')
             ->leftJoin('tb_stores as st', 'st.id', '=', 's.store_id')
+            ->when(Schema::hasColumn('tb_sells', 'deleted_at'), fn ($q) => $q->whereNull('s.deleted_at'))
+            ->when(Schema::hasColumn('tb_outgoing_goods', 'deleted_at'), fn ($q) => $q->whereNull('og.deleted_at'))
             ->whereIn('s.store_id', $storeIds)
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->whereNotNull('og.recorded_by')
             ->whereRaw("TRIM(og.recorded_by) <> ''")
             ->whereRaw('LOWER(TRIM(og.recorded_by)) <> ?', ['stock opname'])
+            ->when($hasSellerIdColumn, fn ($q) => $q->where(fn ($scope) => $scope->whereNull('s.seller_id')->orWhere('s.seller_id', '!=', 1)))
+            ->when($hasInvoiceColumn, function ($q) {
+                $q->where(function ($scope) {
+                    $scope->whereNull('s.no_invoice')->orWhere(function ($invoice) {
+                        $invoice->where('s.no_invoice', 'not like', 'SO-ADJ-%')
+                            ->where('s.no_invoice', 'not like', 'AR-%')
+                            ->where('s.no_invoice', 'not like', 'TRF-%');
+                    });
+                });
+            })
             ->selectRaw('TRIM(og.recorded_by) AS name, s.store_id, st.store_name')
             ->groupByRaw('TRIM(og.recorded_by), s.store_id, st.store_name')
             // Gunakan alias hasil grouping agar kompatibel dengan MySQL ONLY_FULL_GROUP_BY.
@@ -1082,11 +1103,24 @@ class AccountingController extends Controller
         $today = now('Asia/Jakarta')->toDateString();
         $latestByStore = DB::table('tb_outgoing_goods as og')
             ->join('tb_sells as s', 's.id', '=', 'og.sell_id')
+            ->when(Schema::hasColumn('tb_sells', 'deleted_at'), fn ($q) => $q->whereNull('s.deleted_at'))
+            ->when(Schema::hasColumn('tb_outgoing_goods', 'deleted_at'), fn ($q) => $q->whereNull('og.deleted_at'))
             ->whereIn('s.store_id', $storeIds)
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->whereDate('og.created_at', $today)
             ->whereNotNull('og.recorded_by')
             ->whereRaw("TRIM(og.recorded_by) <> ''")
             ->whereRaw('LOWER(TRIM(og.recorded_by)) <> ?', ['stock opname'])
+            ->when($hasSellerIdColumn, fn ($q) => $q->where(fn ($scope) => $scope->whereNull('s.seller_id')->orWhere('s.seller_id', '!=', 1)))
+            ->when($hasInvoiceColumn, function ($q) {
+                $q->where(function ($scope) {
+                    $scope->whereNull('s.no_invoice')->orWhere(function ($invoice) {
+                        $invoice->where('s.no_invoice', 'not like', 'SO-ADJ-%')
+                            ->where('s.no_invoice', 'not like', 'AR-%')
+                            ->where('s.no_invoice', 'not like', 'TRF-%');
+                    });
+                });
+            })
             ->orderByDesc('og.created_at')
             ->get(['s.store_id', 'og.recorded_by'])
             ->unique('store_id')
@@ -1111,18 +1145,6 @@ class AccountingController extends Controller
 
     private function cashDenominations(): array
     {
-        return [
-            'note_100000' => ['label' => 'Rp 100.000', 'value' => 100000, 'kind' => 'Uang kertas'],
-            'note_50000' => ['label' => 'Rp 50.000', 'value' => 50000, 'kind' => 'Uang kertas'],
-            'note_20000' => ['label' => 'Rp 20.000', 'value' => 20000, 'kind' => 'Uang kertas'],
-            'note_10000' => ['label' => 'Rp 10.000', 'value' => 10000, 'kind' => 'Uang kertas'],
-            'note_5000' => ['label' => 'Rp 5.000', 'value' => 5000, 'kind' => 'Uang kertas'],
-            'note_2000' => ['label' => 'Rp 2.000', 'value' => 2000, 'kind' => 'Uang kertas'],
-            'note_1000' => ['label' => 'Rp 1.000', 'value' => 1000, 'kind' => 'Uang kertas'],
-            'coin_1000' => ['label' => 'Rp 1.000', 'value' => 1000, 'kind' => 'Uang logam'],
-            'coin_500' => ['label' => 'Rp 500', 'value' => 500, 'kind' => 'Uang logam'],
-            'coin_200' => ['label' => 'Rp 200', 'value' => 200, 'kind' => 'Uang logam'],
-            'coin_100' => ['label' => 'Rp 100', 'value' => 100, 'kind' => 'Uang logam'],
-        ];
+        return CashDenominations::all();
     }
 }

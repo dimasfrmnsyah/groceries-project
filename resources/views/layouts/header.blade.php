@@ -112,33 +112,64 @@
 
     {{-- Modal input pendapatan harian (khusus staff) --}}
     @if(Auth::check() && in_array(strtolower(Auth::user()->roles ?? ''), ['staff', 'kasir', 'cashier'], true))
+    @php
+        $revenueDenominationOptions = \App\Support\CashDenominations::all();
+        $revenueOldCounts = json_decode((string) old('denominations_payload', ''), true)
+            ?: (old('denominations', []) ?: []);
+    @endphp
     <div class="modal fade" id="revenueModal" tabindex="-1" aria-labelledby="revenueModalLabel" aria-hidden="true">
-        <div class="modal-dialog">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
             <form id="revenueForm"
                   method="POST"
                   action="{{ route('staff.submitRevenueAndLogout') }}"
                   data-revenue-locked="{{ $revenueLockEnabled ? '1' : '0' }}">
                 @csrf
+                <input type="hidden" name="amount" id="amount" value="{{ old('amount', 0) }}">
+                <input type="hidden" name="denominations_payload" id="denominations-payload" value="{{ old('denominations_payload', '') }}">
                 <div class="modal-content">
                     <div class="modal-header">
                         <h5 class="modal-title" id="revenueModalLabel">Pendapatan Hari Ini</h5>
                     </div>
                     <div class="modal-body">
-                        <label for="amount">Masukkan pendapatan Anda hari ini:</label>
-                        <input type="number"
-                               name="amount"
-                               id="amount"
-                               class="form-control"
-                               required
-                               min="0"
-                               step="0.01"
-                               inputmode="decimal"
-                               value="{{ old('amount') }}"
-                               autofocus>
+                        <div class="mb-3">
+                            <div class="fw-semibold">Rincian pendapatan kasir</div>
+                            <small class="text-muted">Masukkan jumlah lembar atau keping uang yang diterima hari ini.</small>
+                        </div>
+                        @foreach(collect($revenueDenominationOptions)->groupBy('kind', true) as $kind => $options)
+                            <div class="text-uppercase text-muted fw-semibold small mb-2 mt-3">{{ $kind }}</div>
+                            <div class="row g-2">
+                                @foreach($options as $key => $option)
+                                    <div class="col-md-6">
+                                        <div class="border rounded p-2 revenue-denomination-row" data-key="{{ $key }}" data-value="{{ $option['value'] }}">
+                                            <div class="d-flex align-items-center gap-2">
+                                                <div class="flex-grow-1">
+                                                    <div class="fw-semibold">{{ $option['label'] }}</div>
+                                                    <small class="text-muted revenue-denomination-subtotal">Rp 0</small>
+                                                </div>
+                                                <input type="number"
+                                                       name="denominations[{{ $key }}]"
+                                                       value="{{ (int) ($revenueOldCounts[$key] ?? 0) }}"
+                                                       min="0"
+                                                       max="100000"
+                                                       step="1"
+                                                       inputmode="numeric"
+                                                       class="form-control text-end revenue-denomination-count"
+                                                       style="max-width:150px"
+                                                       aria-label="Jumlah {{ $option['label'] }}">
+                                            </div>
+                                        </div>
+                                    </div>
+                                @endforeach
+                            </div>
+                        @endforeach
+                        <div class="rounded border bg-light p-3 mt-4">
+                            <div class="text-muted small">Total pendapatan yang dihitung</div>
+                            <div class="fs-3 fw-bold" id="revenue-total-display">Rp 0</div>
+                        </div>
                         @if($revenueLockEnabled)
                             <div class="mt-3 rounded border border-warning-subtle bg-warning-subtle p-3">
                                 <div id="revenueValidationMessage" class="small mt-1 text-danger">
-                                    Tombol logout aktif setelah nominal sama persis.
+                                    Tombol logout aktif setelah rincian sesuai.
                                 </div>
                             </div>
                         @endif
@@ -166,13 +197,37 @@
     <script>
         const revenueForm = document.getElementById('revenueForm');
         const revenueAmountInput = document.getElementById('amount');
+        const revenueDenominationsPayload = document.getElementById('denominations-payload');
+        const revenueTotalDisplay = document.getElementById('revenue-total-display');
         const revenueSubmitButton = document.getElementById('revenueSubmitButton');
         const revenueValidationMessage = document.getElementById('revenueValidationMessage');
         const revenueLocked = revenueForm?.dataset.revenueLocked === '1';
         let revenueValidationTimer = null;
 
+        const revenueRupiah = (value) => 'Rp ' + Number(value || 0).toLocaleString('id-ID');
+
+        const calculateRevenueAmount = () => {
+            let total = 0;
+            const counts = {};
+            document.querySelectorAll('.revenue-denomination-row').forEach((row) => {
+                const input = row.querySelector('.revenue-denomination-count');
+                const count = Math.max(0, Math.trunc(Number(input?.value || 0)));
+                const subtotal = count * Number(row.dataset.value || 0);
+                counts[row.dataset.key] = count;
+                total += subtotal;
+                const subtotalNode = row.querySelector('.revenue-denomination-subtotal');
+                if (subtotalNode) subtotalNode.textContent = revenueRupiah(subtotal);
+            });
+            if (revenueAmountInput) revenueAmountInput.value = String(total);
+            if (revenueDenominationsPayload) revenueDenominationsPayload.value = JSON.stringify(counts);
+            if (revenueTotalDisplay) revenueTotalDisplay.textContent = revenueRupiah(total);
+            return total;
+        };
+
         const validateRevenueAmount = () => {
             if (!revenueLocked || !revenueAmountInput || !revenueSubmitButton) return;
+
+            calculateRevenueAmount();
 
             revenueSubmitButton.disabled = true;
             if (revenueValidationMessage) {
@@ -198,7 +253,7 @@
                     revenueSubmitButton.disabled = !matches;
                     if (revenueValidationMessage) {
                         revenueValidationMessage.textContent = matches
-                            ? 'Nominal sudah sesuai dengan total penjualan sistem.'
+                            ? 'Nominal sudah sesuai.'
                             : 'Nominal belum sesuai. Submit & Logout masih dikunci.';
                         revenueValidationMessage.className = matches
                             ? 'small mt-1 text-success'
@@ -214,13 +269,17 @@
                 });
         };
 
-        if (revenueLocked && revenueAmountInput) {
-            revenueAmountInput.addEventListener('input', () => {
-                window.clearTimeout(revenueValidationTimer);
-                revenueValidationTimer = window.setTimeout(validateRevenueAmount, 250);
-            });
+        document.querySelectorAll('.revenue-denomination-count').forEach((input) => input.addEventListener('input', () => {
+            calculateRevenueAmount();
+            if (!revenueLocked) return;
+            window.clearTimeout(revenueValidationTimer);
+            revenueValidationTimer = window.setTimeout(validateRevenueAmount, 250);
+        }));
+        if (revenueLocked) {
             document.getElementById('revenueModal')?.addEventListener('shown.bs.modal', validateRevenueAmount);
         }
+        revenueForm?.addEventListener('submit', calculateRevenueAmount);
+        calculateRevenueAmount();
 
         function showRevenueModal() {
             const modal = new bootstrap.Modal(document.getElementById('revenueModal'));

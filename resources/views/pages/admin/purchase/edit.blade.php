@@ -82,7 +82,7 @@
                                         @endforeach
                                     </select>
                                 </td>
-                                <td><input type="number" id="product-stock" class="form-control" min="1" value="1"></td>
+                            <td><input type="number" id="product-stock" class="form-control" min="1" max="100000" value="1"></td>
                                 <td><input type="number" id="product-price" class="form-control" value="0" readonly></td>
                                 <td><input type="text" id="product-description" class="form-control"></td>
                                 <td>

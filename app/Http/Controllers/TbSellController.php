@@ -23,6 +23,12 @@ class TbSellController extends Controller
         $role = strtolower((string) ($user->roles ?? ''));
         $storeId = $request->filled('store_id') ? (int) $request->input('store_id') : null;
         $query = tb_sell::with('store')
+            // Adjustment stock opname tetap tersimpan sebagai ledger, tetapi
+            // tidak boleh tampil sebagai penjualan kasir biasa.
+            ->where(function ($q) {
+                $q->whereNull('no_invoice')
+                    ->orWhere('no_invoice', 'not like', 'SO-ADJ-%');
+            })
             ->orderByDesc('id');
         if ($role !== 'superadmin') {
             $allowed = store_access_ids($user);

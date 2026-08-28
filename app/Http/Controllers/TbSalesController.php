@@ -4,25 +4,26 @@ namespace App\Http\Controllers;
 
 use App\Models\tb_customers;
 use App\Models\tb_outgoing_goods;
+use App\Support\StockLedger;
 use App\Models\tb_products;
 use App\Models\tb_sell;
 use App\Models\tb_stores;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Database\QueryException;
 use Illuminate\Validation\Rule;
+use App\Support\MenuHelper;
 
 class TbSalesController extends Controller
 {
-    // Data opname lama pernah tersimpan dengan nilai negatif/ekstrem. Nilai
-    // seperti ini tidak boleh memengaruhi saldo kasir, tetapi baris lama yang
-    // normal tetap harus dihitung.
-    private const MAX_LEGACY_STOCK_ADJUSTMENT = 10000;
+    // Semua transaksi kasir normal tetap dihitung. Movement negatif/ekstrem
+    // tidak boleh mengubah saldo operasional.
 
     public function index(Request $request)
     {
@@ -64,13 +65,14 @@ class TbSalesController extends Controller
 
     public function store(Request $request)
     {
+        $this->authorizeSaleEndpoint($request->user());
         $input = $request->input('data', []);
         $validator = Validator::make($input, [
             'transaction_date' => 'required|date',
             'customer_money' => 'required|numeric|min:0',
             'customer_id' => 'nullable|integer',
             // Nullable untuk kompatibilitas browser kasir lama. Jika kosong,
-            // server membentuk key legacy dari nomor invoice + user + toko.
+            // server membentuk key legacy dari invoice/payload + user + toko.
             'idempotency_key' => 'nullable|string|max:64',
             'no_invoice' => 'nullable|string|max:80',
             'products' => 'required|array|min:1',
@@ -98,13 +100,20 @@ class TbSalesController extends Controller
         $idempotencyKey = trim((string) ($input['idempotency_key'] ?? ''));
         if ($idempotencyKey === '') {
             $legacyInvoice = trim((string) ($input['no_invoice'] ?? ''));
-            $idempotencyKey = $legacyInvoice !== ''
-                ? 'legacy-'.hash('sha256', implode('|', [
-                    (string) $user->id,
-                    (string) $store_id,
-                    $legacyInvoice,
-                ]))
-                : 'legacy-'.Str::uuid();
+            // Browser lama mungkin belum mengirim idempotency_key. Gunakan
+            // fingerprint deterministik agar double-click/retry tidak membuat
+            // nota kedua. Hash langsung 64 karakter agar sesuai kolom DB.
+            $legacyFingerprint = $legacyInvoice !== ''
+                ? ['invoice', $legacyInvoice]
+                : ['payload', json_encode([
+                    'date' => $input['transaction_date'] ?? null,
+                    'customer_id' => $input['customer_id'] ?? null,
+                    'products' => $input['products'] ?? [],
+                ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)];
+            $idempotencyKey = hash('sha256', implode('|', array_merge(
+                ['legacy', (string) $user->id, (string) $store_id],
+                $legacyFingerprint
+            )));
         }
 
         $requestedQtyByProduct = collect($input['products'])
@@ -159,7 +168,7 @@ class TbSalesController extends Controller
 
                 foreach ($requestedQtyByProduct as $productId => $qty) {
                     $stock = (int) ($availableStock[$productId] ?? 0);
-                    // Saldo negatif adalah data legacy yang sudah terlanjur tidak
+                    // Saldo negatif dari data existing sudah terlanjur tidak
                     // konsisten. Jangan blokir operasional: movement penjualan
                     // tetap dibuat dan saldo akan berkurang sesuai qty.
                     if ($stock < 0) {
@@ -254,6 +263,8 @@ class TbSalesController extends Controller
                 return $sell;
             }, 3);
 
+            Cache::forget('order_stock_summary:store:'.$store_id);
+            Cache::forget('order_stock_summary:all');
             return response()->json([
                 'success' => true,
                 'message' => 'Data berhasil diproses',
@@ -312,19 +323,12 @@ class TbSalesController extends Controller
 
         $incomingSub = DB::table('tb_incoming_goods as ig')
             ->leftJoin('tb_purchases as p', 'ig.purchase_id', '=', 'p.id')
-            ->leftJoin('tb_suppliers as sp', 'sp.id', '=', 'p.supplier_id')
             ->when($hasIncomingDeleted, fn ($q) => $q->whereNull('ig.deleted_at'))
             ->when($hasPurchaseDeleted, fn ($q) => $q->whereNull('p.deleted_at'))
-            // Kompatibilitas data lama: source_type kosong tetap dihitung.
-            // Hanya adjustment SO-ADJ yang nilainya jelas korup yang diabaikan.
-            ->where(function ($q) {
-                $q->whereNull('sp.code')
-                    ->orWhere('sp.code', '<>', 'SO-ADJ')
-                    ->orWhere(function ($normal) {
-                        $normal->where('ig.stock', '>=', 0)
-                            ->where('ig.stock', '<=', self::MAX_LEGACY_STOCK_ADJUSTMENT);
-                    });
-            })
+            // source_type kosong tetap dihitung agar transaksi normal tetap
+            // kompatibel dengan seluruh data yang sudah ada. Quantity di luar
+            // batas bisnis dikeluarkan dari saldo operasional.
+            ->whereBetween('ig.stock', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->when(
                 $hasIncomingStore,
                 fn ($q) => $q->where(function ($qq) use ($storeId) {
@@ -347,17 +351,9 @@ class TbSalesController extends Controller
             ->when($hasOutgoingDeleted, fn ($q) => $q->whereNull('og.deleted_at'))
             ->when($hasSellDeleted, fn ($q) => $q->whereNull('sl.deleted_at'))
             ->where('sl.store_id', $storeId)
-            // source_type kosong pada transaksi kasir lama tetap valid. Hanya
-            // opname lama dengan qty negatif/ekstrem yang dikeluarkan dari
-            // saldo kasir sampai data tersebut dikarantina/direkonsiliasi.
-            ->where(function ($q) {
-                $q->where('sl.no_invoice', 'not like', 'SO-ADJ-OUT-%')
-                    ->orWhereRaw('LOWER(TRIM(COALESCE(og.recorded_by, ""))) <> ?', ['stock opname'])
-                    ->orWhere(function ($normal) {
-                        $normal->where('og.quantity_out', '>=', 0)
-                            ->where('og.quantity_out', '<=', self::MAX_LEGACY_STOCK_ADJUSTMENT);
-                    });
-            })
+            // source_type kosong pada transaksi kasir tetap valid. Quantity
+            // negatif/ekstrem tidak boleh mengubah saldo operasional.
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->when($hasPendingOut, function ($q) {
                 $q->where(function ($qq) {
                     $qq->whereNull('og.is_pending_stock')
@@ -379,6 +375,17 @@ class TbSalesController extends Controller
             ->pluck('current_stock', 'id')
             ->map(fn ($stock) => (int) $stock)
             ->all();
+    }
+
+    private function authorizeSaleEndpoint(?User $user): void
+    {
+        $role = strtolower(trim((string) ($user?->roles ?? '')));
+        $knownCashierRoles = ['superadmin', 'admin', 'staff', 'kasir', 'cashier'];
+        abort_unless(
+            $user && (in_array($role, $knownCashierRoles, true) || MenuHelper::roleHasRoute('sales.index', $role)),
+            403,
+            'Akun ini tidak memiliki akses untuk membuat penjualan.'
+        );
     }
 
     private function saleMovementMatches(int $sellId, $requestedQtyByProduct): bool

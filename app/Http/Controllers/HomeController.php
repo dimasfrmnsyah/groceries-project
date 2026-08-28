@@ -7,6 +7,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Schema;
+use App\Support\StockLedger;
 
 class HomeController extends Controller
 {
@@ -119,6 +120,7 @@ public function index(Request $request)
             Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
             fn ($q) => $q->whereNull('og.deleted_at')
         )
+        ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
         ->select();
     $hppBase = DB::table('tb_outgoing_goods as og')
         ->join('tb_sells as s', 'og.sell_id', '=', 's.id')
@@ -131,6 +133,7 @@ public function index(Request $request)
             Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
             fn ($q) => $q->whereNull('og.deleted_at')
         );
+    $hppBase->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY]);
 
     $excludeStockOpname($salesQuery);
     $excludeStockOpname($hppBase);
@@ -162,6 +165,7 @@ public function index(Request $request)
                 Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
                 fn ($q) => $q->whereNull('og.deleted_at')
             )
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->when($storeId, fn($q) => $q->where('s.store_id', $storeId))
             ->whereBetween('s.date', [$start, $end])
             ->selectRaw('s.id, s.date, s.total_price')
@@ -231,6 +235,7 @@ public function index(Request $request)
             Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
             fn ($q) => $q->whereNull('og.deleted_at')
         )
+        ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
         ->select('p.product_name', DB::raw('SUM(og.quantity_out) as total_sold'))
         ->groupBy('p.product_name')
         ->orderByDesc('total_sold')
@@ -324,6 +329,7 @@ public function index(Request $request)
                                      });
                                  })
             )
+            ->whereBetween('ig.stock', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->select('ig.product_id', DB::raw('SUM(ig.stock) AS total_in'))
             ->groupBy('ig.product_id');
 
@@ -341,6 +347,7 @@ public function index(Request $request)
                            ->orWhere('og.is_pending_stock', 0);
                     });
                 })
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->select('og.product_id', DB::raw('SUM(og.quantity_out) AS total_out'))
             ->groupBy('og.product_id');
 
@@ -384,6 +391,7 @@ public function index(Request $request)
                     });
                 }
             )
+            ->whereBetween('ig.stock', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->select('pur.store_id', 'ig.product_id', DB::raw('SUM(ig.stock) AS total_in'))
             ->groupBy('pur.store_id', 'ig.product_id');
 
@@ -402,6 +410,7 @@ public function index(Request $request)
                     });
                 }
             )
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->select('sl.store_id', 'og.product_id', DB::raw('SUM(og.quantity_out) AS total_out'))
             ->groupBy('sl.store_id', 'og.product_id');
 

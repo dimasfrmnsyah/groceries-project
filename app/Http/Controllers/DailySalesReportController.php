@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\tb_outgoing_goods;
+use App\Support\StockLedger;
 use App\Models\tb_sell;
 use App\Models\tb_stores;
 use App\Models\tb_types;
@@ -123,6 +124,7 @@ class DailySalesReportController extends Controller
                 Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
                 fn ($q) => $q->whereNull('tb_outgoing_goods.deleted_at')
             )
+            ->whereBetween('tb_outgoing_goods.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId))
             ->where(function ($q) {
                 $q->whereNull('s.no_invoice')
@@ -269,6 +271,7 @@ class DailySalesReportController extends Controller
                 Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
                 fn ($q) => $q->whereNull('tb_outgoing_goods.deleted_at')
             )
+            ->whereBetween('tb_outgoing_goods.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId))
             ->when($typeId, fn ($q) => $q->where('p.type_id', $typeId))
             // abaikan penyesuaian stock opname (invoice dibuat otomatis)
@@ -368,6 +371,7 @@ class DailySalesReportController extends Controller
                 Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
                 fn ($q) => $q->whereNull('tb_outgoing_goods.deleted_at')
             )
+            ->whereBetween('tb_outgoing_goods.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId))
             ->when($typeId, fn ($q) => $q->where('p.type_id', $typeId))
             ->where(function ($q) {
@@ -552,12 +556,17 @@ class DailySalesReportController extends Controller
         return tb_outgoing_goods::query()
             ->join('tb_sells as s', 's.id', '=', 'tb_outgoing_goods.sell_id')
             ->select('tb_outgoing_goods.recorded_by')
+            ->when(
+                Schema::hasColumn('tb_sells', 'deleted_at'),
+                fn ($q) => $q->whereNull('s.deleted_at')
+            )
             ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId))
             ->whereRaw('LOWER(COALESCE(TRIM(tb_outgoing_goods.recorded_by), "")) != ?', ['stock opname'])
             ->when(
                 Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock') && $sourceMode !== 'all',
                 fn ($q) => $q->where('tb_outgoing_goods.is_pending_stock', $sourceMode === 'offline' ? 1 : 0)
             )
+            ->whereBetween('tb_outgoing_goods.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->whereNotNull('recorded_by')
             ->where(function ($query) use ($start, $end) {
                 $query->whereBetween('s.date', [$start, $end]);

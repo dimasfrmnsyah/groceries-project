@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use App\Support\StockLedger;
 
 class ItemMovingController extends Controller
 {
@@ -62,6 +63,7 @@ class ItemMovingController extends Controller
             ->where('s.store_id', $storeId)
             ->when(Schema::hasColumn('tb_outgoing_goods', 'deleted_at'), fn ($q) => $q->whereNull('og.deleted_at'))
             ->when(Schema::hasColumn('tb_sells', 'deleted_at'), fn ($q) => $q->whereNull('s.deleted_at'))
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->where(function ($q) {
                 $q->whereNull('s.no_invoice')
                   ->orWhere(function ($qq) {
@@ -166,6 +168,7 @@ class ItemMovingController extends Controller
                     $qq->whereNull('ig.is_pending_stock')->orWhere('ig.is_pending_stock', 0);
                 });
             })
+            ->whereBetween('ig.stock', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->select('ig.product_id', DB::raw('SUM(ig.stock) as total_in'))
             ->groupBy('ig.product_id');
 
@@ -178,6 +181,7 @@ class ItemMovingController extends Controller
                     $qq->whereNull('og.is_pending_stock')->orWhere('og.is_pending_stock', 0);
                 });
             })
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->select('og.product_id', DB::raw('SUM(og.quantity_out) as total_out'))
             ->groupBy('og.product_id');
 

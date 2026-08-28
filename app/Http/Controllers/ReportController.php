@@ -9,6 +9,7 @@ use Yajra\DataTables\Facades\DataTables;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use App\Support\StockLedger;
 class ReportController extends Controller
 {
     public function index(Request $request)
@@ -66,9 +67,24 @@ class ReportController extends Controller
     $startStr = $start->toDateString(); // YYYY-MM-DD
     $endStr   = $end->toDateString();
 
+    $hasRevenueStore = schemaHasColumn('daily_revenues', 'store_id');
+    $revenueSelect = ['id', 'user_id', 'amount', 'date', 'created_at'];
+    if ($hasRevenueStore) {
+        $revenueSelect[] = 'store_id';
+    }
     $revenueRows = \App\Models\tb_daily_revenues::with('user:id,name,store_id')
-        ->select(['id', 'user_id', 'amount', 'date', 'created_at'])
-        ->whereHas('user', fn($q) => $q->where('store_id', $storeId))
+        ->select($revenueSelect)
+        ->when(
+            $hasRevenueStore,
+            fn ($q) => $q->where(function ($scope) use ($storeId) {
+                $scope->where('store_id', $storeId)
+                    ->orWhere(function ($legacy) use ($storeId) {
+                        $legacy->whereNull('store_id')
+                            ->whereHas('user', fn ($userQuery) => $userQuery->where('store_id', $storeId));
+                    });
+            }),
+            fn ($q) => $q->whereHas('user', fn($userQuery) => $userQuery->where('store_id', $storeId))
+        )
         ->whereDate('date', '>=', $startStr)
         ->whereDate('date', '<=', $endStr)
         ->orderBy('date')
@@ -77,6 +93,8 @@ class ReportController extends Controller
 
     $hasSellerIdColumn = schemaHasColumn('tb_sells', 'seller_id');
     $hasInvoiceColumn  = schemaHasColumn('tb_sells', 'no_invoice');
+    $hasSellCreatedByColumn = schemaHasColumn('tb_sells', 'created_by');
+    $hasOutgoingCreatedByColumn = schemaHasColumn('tb_outgoing_goods', 'created_by');
 
     $excludeStockOpname = function ($query) use ($hasSellerIdColumn, $hasInvoiceColumn) {
         if ($hasSellerIdColumn) {
@@ -101,6 +119,7 @@ class ReportController extends Controller
     // Ambil transaksi per nota (pakai total_price agar konsisten dengan halaman home)
     $salesRawQuery = DB::table('tb_sells as s')
         ->join('tb_outgoing_goods as og', 'og.sell_id', '=', 's.id')
+        ->when($hasSellCreatedByColumn, fn ($q) => $q->leftJoin('users as creator', 'creator.id', '=', 's.created_by'))
         ->when(
             schemaHasColumn('tb_sells', 'deleted_at'),
             fn ($q) => $q->whereNull('s.deleted_at')
@@ -110,25 +129,42 @@ class ReportController extends Controller
             fn ($q) => $q->whereNull('og.deleted_at')
         )
         ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId))
+        ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
         ->whereBetween('s.date', [$start, $end])
-        ->selectRaw('s.id, s.date, s.total_price, s.created_at, MAX(og.created_at) as og_created_at, MAX(og.recorded_by) as recorded_by')
+        ->selectRaw('s.id, s.date, s.total_price, s.created_at, MAX(og.created_at) as og_created_at, MAX(og.recorded_by) as recorded_by'
+            .($hasSellCreatedByColumn ? ', MAX(s.created_by) as sell_created_by, MAX(creator.name) as creator_name' : '')
+            .($hasOutgoingCreatedByColumn ? ', MAX(og.created_by) as outgoing_created_by' : ''))
         ->groupBy('s.id', 's.date', 's.total_price', 's.created_at');
 
     $excludeStockOpname($salesRawQuery);
     $salesRaw = $salesRawQuery->get();
 
     // Kelompokkan transaksi per kasir+tanggal memakai total invoice kasir.
+    // Data baru memakai user id; data lama memakai nama pada movement.
+    // Keduanya disimpan terpisah agar transaksi baru tidak terhitung dua kali
+    // saat transaksi lama dan baru bercampur pada hari yang sama.
     $salesByCashierDate = [];
     $cashierNamesByKey = [];
+    $salesByUserDate = [];
+    $userNamesByKey = [];
     foreach ($salesRaw as $sale) {
         $dateKey = $sale->date
             ? \Carbon\Carbon::parse($sale->date)->toDateString()
             : \Carbon\Carbon::parse($sale->created_at)->toDateString();
-        $norm  = $this->normalizeName($sale->recorded_by);
+        $cashierName = trim((string) ($sale->recorded_by ?? ''))
+            ?: trim((string) ($sale->creator_name ?? ''));
+        $norm  = $this->normalizeName($cashierName);
         $total = (float) $sale->total_price;
-        $key = $dateKey.'|'.$norm;
-        $salesByCashierDate[$key] = ($salesByCashierDate[$key] ?? 0) + $total;
-        $cashierNamesByKey[$key] = trim((string) $sale->recorded_by);
+        $createdBy = trim((string) (($sale->sell_created_by ?? null) ?: ($sale->outgoing_created_by ?? null)));
+        if ($createdBy !== '') {
+            $key = $dateKey.'|@'.$createdBy;
+            $salesByUserDate[$key] = ($salesByUserDate[$key] ?? 0) + $total;
+            $userNamesByKey[$key] = $cashierName;
+        } else {
+            $key = $dateKey.'|'.$norm;
+            $salesByCashierDate[$key] = ($salesByCashierDate[$key] ?? 0) + $total;
+            $cashierNamesByKey[$key] = $cashierName;
+        }
     }
 
     $rows = [];
@@ -138,7 +174,7 @@ class ReportController extends Controller
             ? $row->date->toDateString()
             : \Carbon\Carbon::parse($row->date)->toDateString();
 
-        return $dateKey.'|'.$this->normalizeName(optional($row->user)->name);
+        return $dateKey.'|@'.(string) $row->user_id;
     });
 
     foreach ($revenueGroups as $key => $group) {
@@ -147,9 +183,21 @@ class ReportController extends Controller
             ? $first->date->toDateString()
             : \Carbon\Carbon::parse($first->date)->toDateString();
         $amount = (float) $group->sum('amount');
-        $omset = (float) ($salesByCashierDate[$key] ?? 0);
-        if (array_key_exists($key, $salesByCashierDate)) {
-            $matchedSalesKeys[$key] = true;
+        $nameKey = $dateKey.'|'.$this->normalizeName(optional($first->user)->name);
+        $userKey = $dateKey.'|@'.(string) $first->user_id;
+        $hasUserSales = array_key_exists($userKey, $salesByUserDate);
+        $omset = $hasUserSales
+            ? (float) $salesByUserDate[$userKey] + (float) ($salesByCashierDate[$nameKey] ?? 0)
+            : (float) ($salesByCashierDate[$nameKey] ?? 0);
+        if ($hasUserSales) {
+            $matchedSalesKeys[$userKey] = true;
+            // Baris tanpa created_by dari data lama tetap ikut pada user yang
+            // sama. Nama tetap menjadi fallback bila user id tidak tersedia.
+            if (array_key_exists($nameKey, $salesByCashierDate)) {
+                $matchedSalesKeys[$nameKey] = true;
+            }
+        } elseif (array_key_exists($nameKey, $salesByCashierDate)) {
+            $matchedSalesKeys[$nameKey] = true;
         }
 
         $rows[] = [
@@ -164,6 +212,24 @@ class ReportController extends Controller
                     Detail Penjualan <i class="bx bx-right-arrow-alt"></i>
                 </a>
             </div>',
+        ];
+    }
+
+    foreach ($salesByUserDate as $key => $omset) {
+        if (isset($matchedSalesKeys[$key])) {
+            continue;
+        }
+
+        [$dateKey] = explode('|', $key, 2);
+        $cashierName = $userNamesByKey[$key] ?: 'Belum input setoran';
+        $rows[] = [
+            'id' => null,
+            'name' => $cashierName.' (belum input setoran)',
+            'amount' => 0,
+            'omset' => (float) $omset,
+            'date' => $dateKey,
+            'status' => 0 - (float) $omset,
+            'action' => '<span class="text-muted">Belum ada setoran</span>',
         ];
     }
 
@@ -207,6 +273,9 @@ class ReportController extends Controller
     if (schemaHasColumn('daily_revenues','store_id')) {
         $select[] = 'store_id';
     }
+    if (schemaHasColumn('daily_revenues','denominations')) {
+        $select[] = 'denominations';
+    }
 
     $revenue = tb_daily_revenues::with('user:id,name')
         ->select($select)
@@ -233,11 +302,48 @@ public function detailData(Request $request, $id)
     $cashierName = trim(optional($revenue->user)->name ?? '');
     $storeId     = schemaHasColumn('daily_revenues','store_id') ? $revenue->store_id : optional($revenue->user)->store_id;
 
+    $hasSellerIdColumn = schemaHasColumn('tb_sells', 'seller_id');
+    $hasInvoiceColumn = schemaHasColumn('tb_sells', 'no_invoice');
+    $hasSellCreatedByColumn = schemaHasColumn('tb_sells', 'created_by');
+    $hasOutgoingCreatedByColumn = schemaHasColumn('tb_outgoing_goods', 'created_by');
+
     $query = tb_outgoing_goods::query()
-        ->select('id','uuid','product_id','sell_id','date','quantity_out','discount','recorded_by','description','created_at')
-        ->whereDate('date', $filterDate)
-        ->when($cashierName !== '', fn($q) => $q->whereRaw('LOWER(TRIM(recorded_by)) = ?', [strtolower($cashierName)]))
-        ->when(schemaHasColumn('tb_outgoing_goods','store_id') && $storeId, fn($q) => $q->where('store_id', $storeId));
+        ->join('tb_sells as s', 's.id', '=', 'tb_outgoing_goods.sell_id')
+        ->select('tb_outgoing_goods.id','tb_outgoing_goods.uuid','tb_outgoing_goods.product_id','tb_outgoing_goods.sell_id','tb_outgoing_goods.date','tb_outgoing_goods.quantity_out','tb_outgoing_goods.discount','tb_outgoing_goods.recorded_by','tb_outgoing_goods.description','tb_outgoing_goods.created_at')
+        ->whereDate('tb_outgoing_goods.date', $filterDate)
+        ->whereBetween('tb_outgoing_goods.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
+        ->when(schemaHasColumn('tb_sells', 'deleted_at'), fn ($q) => $q->whereNull('s.deleted_at'))
+        ->when(schemaHasColumn('tb_outgoing_goods', 'store_id') && $storeId, function ($q) use ($storeId) {
+            $q->where(function ($scope) use ($storeId) {
+                $scope->where('tb_outgoing_goods.store_id', $storeId)
+                    ->orWhere(function ($legacy) use ($storeId) {
+                        $legacy->whereNull('tb_outgoing_goods.store_id')
+                            ->where('s.store_id', $storeId);
+                    });
+            });
+        })
+        ->when(!schemaHasColumn('tb_outgoing_goods', 'store_id') && $storeId, fn($q) => $q->where('s.store_id', $storeId))
+        ->when($cashierName !== '', function ($q) use ($cashierName, $revenue, $hasSellCreatedByColumn, $hasOutgoingCreatedByColumn) {
+            $q->where(function ($identity) use ($cashierName, $revenue, $hasSellCreatedByColumn, $hasOutgoingCreatedByColumn) {
+                $identity->whereRaw('LOWER(TRIM(COALESCE(tb_outgoing_goods.recorded_by, ""))) = ?', [strtolower($cashierName)]);
+                if ($hasOutgoingCreatedByColumn) {
+                    $identity->orWhere('tb_outgoing_goods.created_by', $revenue->user_id);
+                }
+                if ($hasSellCreatedByColumn) {
+                    $identity->orWhere('s.created_by', $revenue->user_id);
+                }
+            });
+        })
+        ->when($hasSellerIdColumn, fn ($q) => $q->where(fn ($scope) => $scope->whereNull('s.seller_id')->orWhere('s.seller_id', '!=', 1)))
+        ->when($hasInvoiceColumn, function ($q) {
+            $q->where(function ($scope) {
+                $scope->whereNull('s.no_invoice')->orWhere(function ($invoice) {
+                    $invoice->where('s.no_invoice', 'not like', 'SO-ADJ-%')
+                        ->where('s.no_invoice', 'not like', 'AR-%')
+                        ->where('s.no_invoice', 'not like', 'TRF-%');
+                });
+            });
+        });
 
     if (method_exists(\App\Models\tb_outgoing_goods::class, 'product')) {
         $query->with('product:id,product_name as name,selling_price as price');

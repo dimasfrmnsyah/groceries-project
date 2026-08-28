@@ -53,6 +53,7 @@
       @else
       <form method="POST" action="{{ route('order-stock.restock') }}">
         @csrf
+        <input type="hidden" name="idempotency_key" id="order-stock-idempotency-key" value="">
         <input type="hidden" name="store_id" value="{{ $selected }}">
         <div class="card">
           <div class="card-body">
@@ -102,7 +103,7 @@
               <div class="fw-bold">Total Harga: <span id="grand-total">0</span></div>
             </div>
             <div class="text-end mt-3">
-              <button type="submit" class="btn btn-primary">Checklist &amp; Restock ke Max</button>
+              <button type="submit" class="btn btn-primary" id="order-stock-submit">Checklist &amp; Restock ke Max</button>
             </div>
           </div>
         </div>
@@ -148,5 +149,19 @@
     inp.addEventListener('input', recalcTotals);
     inp.addEventListener('change', recalcTotals);
   });
+
+  const orderStockForm = document.querySelector('form[action="{{ route('order-stock.restock') }}"]');
+  const orderStockKey = document.getElementById('order-stock-idempotency-key');
+  const orderStockSubmit = document.getElementById('order-stock-submit');
+  if (orderStockForm && orderStockKey && orderStockSubmit) {
+    orderStockKey.value = window.crypto?.randomUUID
+      ? window.crypto.randomUUID()
+      : ('order-stock-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+
+    orderStockForm.addEventListener('submit', () => {
+      orderStockSubmit.disabled = true;
+      orderStockSubmit.textContent = 'Memproses...';
+    });
+  }
 </script>
 @endsection

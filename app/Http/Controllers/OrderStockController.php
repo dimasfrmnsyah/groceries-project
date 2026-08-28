@@ -10,9 +10,15 @@ use Maatwebsite\Excel\Facades\Excel;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use App\Exports\OrderStockExport;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Str;
+use Illuminate\Database\QueryException;
+use App\Support\StockLedger;
 
 class OrderStockController extends Controller
 {
+    // Nilai ekstrem pada movement tidak boleh memengaruhi PO otomatis.
+    private const MAX_PO_QUANTITY = 10000;
+
     public function summary(Request $request)
     {
         $user = $request->user();
@@ -72,7 +78,7 @@ class OrderStockController extends Controller
         }
 
         $items = $this->lowStockQuery($storeId)->get()->map(function ($row) {
-            $row->po_qty = max(0, ((int)$row->max_stock) - ((int)$row->stock_system));
+            $row->po_qty = $this->defaultPoQuantity($row->stock_system, $row->max_stock);
             return $row;
         });
         $currentStore = DB::table('tb_stores')->where('id', $storeId)->value('store_name');
@@ -103,11 +109,27 @@ class OrderStockController extends Controller
             ],
             'po_qty' => 'nullable|array',
             'po_qty.*' => 'nullable|integer|min:0|max:10000',
+            'idempotency_key' => 'nullable|string|max:64',
         ]);
         $items = array_filter($request->input('items', []), fn ($v) => $v !== null && $v !== '');
         if (empty($items)) return back()->with('warning', 'Tidak ada produk yang dipilih.');
 
         $poInput = $request->input('po_qty', []);
+        $idempotencyKey = trim((string) $request->input('idempotency_key', ''));
+        if ($idempotencyKey === '') {
+            $idempotencyKey = (string) Str::uuid();
+        }
+
+        $hasPurchaseIdempotency = Schema::hasColumn('tb_purchases', 'idempotency_key');
+        if ($hasPurchaseIdempotency) {
+            $existing = DB::table('tb_purchases')
+                ->where('idempotency_key', $idempotencyKey)
+                ->where('store_id', $storeId)
+                ->first();
+            if ($existing) {
+                return back()->with('success', 'Restock sudah diproses sebelumnya.');
+            }
+        }
 
         DB::beginTransaction();
         try {
@@ -119,9 +141,14 @@ class OrderStockController extends Controller
                 ->whereNotNull('st.max_stock')
                 ->get()
                 ->map(function ($row) use ($poInput) {
-                    $defaultPo   = max(0, ((int)$row->max_stock) - ((int)$row->stock_system));
-                    $inputCustom = (int)($poInput[$row->id] ?? $defaultPo);
-                    $row->po_qty = max(0, $inputCustom);
+                    $defaultPo = $this->defaultPoQuantity($row->stock_system, $row->max_stock);
+                    $inputCustom = array_key_exists($row->id, $poInput)
+                        ? (int) $poInput[$row->id]
+                        : $defaultPo;
+                    // Jangan pernah membiarkan saldo negatif existing menghasilkan
+                    // PO ratusan ribu. Nilai default sudah dinormalisasi ke stok 0
+                    // dan tetap dibatasi sesuai batas input bisnis.
+                    $row->po_qty = min(self::MAX_PO_QUANTITY, max(0, $inputCustom));
                     return $row;
                 });
 
@@ -145,14 +172,18 @@ class OrderStockController extends Controller
                 return back()->with('warning', 'Semua stok sudah maksimal.');
             }
 
-            $purchaseId = DB::table('tb_purchases')->insertGetId([
+            $purchasePayload = [
                 'supplier_id' => null,
                 'store_id'    => $storeId,
                 'total_price' => 0,
                 'created_by'  => $user?->id,
                 'created_at'  => $now,
                 'updated_at'  => $now,
-            ]);
+            ];
+            if ($hasPurchaseIdempotency) {
+                $purchasePayload['idempotency_key'] = $idempotencyKey;
+            }
+            $purchaseId = DB::table('tb_purchases')->insertGetId($purchasePayload);
 
             $rows = [];
             foreach ($restockRows as $row) {
@@ -182,7 +213,17 @@ class OrderStockController extends Controller
             ]);
 
             DB::commit();
+            Cache::forget('order_stock_summary:store:'.$storeId);
+            Cache::forget('order_stock_summary:all');
             return back()->with('success', 'Stok berhasil diatur ke nilai maksimum.');
+        } catch (QueryException $e) {
+            DB::rollBack();
+            // Jika dua klik masuk bersamaan, unique idempotency_key membuat
+            // request kedua menjadi retry aman, bukan pembelian kedua.
+            if ($hasPurchaseIdempotency && str_contains(strtolower($e->getMessage()), 'idempotency_key')) {
+                return back()->with('success', 'Restock sudah diproses sebelumnya.');
+            }
+            return back()->with('error', 'Restock gagal disimpan. Tidak ada perubahan yang diterapkan.');
         } catch (\Throwable $e) {
             DB::rollBack();
             return back()->with('error', $e->getMessage());
@@ -196,7 +237,7 @@ class OrderStockController extends Controller
         if (!$storeId) return back()->with('error', 'Pilih toko terlebih dahulu.');
 
         $items = $this->lowStockQuery($storeId)->get()->map(function ($row) {
-            $row->po_qty = max(0, ((int)$row->max_stock) - ((int)$row->stock_system));
+            $row->po_qty = $this->defaultPoQuantity($row->stock_system, $row->max_stock);
             return $row;
         });
 
@@ -238,7 +279,7 @@ class OrderStockController extends Controller
                     'min_stock' => $row->min_stock,
                     'max_stock' => $row->max_stock,
                     'stock_system' => $row->stock_system,
-                    'po_qty' => max(0, ((int) $row->max_stock) - ((int) $row->stock_system)),
+                    'po_qty' => $this->defaultPoQuantity($row->stock_system, $row->max_stock),
                 ];
             })
             ->values();
@@ -280,7 +321,7 @@ class OrderStockController extends Controller
                         'min_stock' => $row->min_stock,
                         'max_stock' => $row->max_stock,
                         'stock_system' => $row->stock_system,
-                        'po_qty' => max(0, ((int) $row->max_stock) - ((int) $row->stock_system)),
+                        'po_qty' => $this->defaultPoQuantity($row->stock_system, $row->max_stock),
                     ];
                 })
                 ->values();
@@ -306,33 +347,32 @@ class OrderStockController extends Controller
     private function lowStockQuery(int $storeId)
     {
         $incomingSub = DB::table('tb_incoming_goods as ig')
+            ->leftJoin('tb_purchases as pur', 'pur.id', '=', 'ig.purchase_id')
             ->when(
                 Schema::hasColumn('tb_incoming_goods', 'deleted_at'),
                 fn ($q) => $q->whereNull('ig.deleted_at')
             )
             ->when(
+                Schema::hasColumn('tb_purchases', 'deleted_at'),
+                fn ($q) => $q->whereNull('pur.deleted_at')
+            )
+            // Semua quantity di luar batas bisnis dikeluarkan dari saldo PO,
+            // termasuk data korup yang tidak memiliki penanda SO.
+            ->whereBetween('ig.stock', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
+            ->when(
                 Schema::hasColumn('tb_incoming_goods', 'store_id'),
                 fn ($q) => $q->where(function ($qq) use ($storeId) {
                     $qq->where('ig.store_id', $storeId)
-                       ->orWhereExists(function ($ex) use ($storeId) {
-                           $ex->select(DB::raw(1))
-                              ->from('tb_purchases as pur')
-                              ->whereColumn('pur.id', 'ig.purchase_id')
-                              ->where('pur.store_id', $storeId);
-                       });
-                })->when(Schema::hasColumn('tb_incoming_goods', 'is_pending_stock'),
-                    fn ($q2) => $q2->where(function ($w) {
-                        $w->whereNull('ig.is_pending_stock')
-                          ->orWhere('ig.is_pending_stock', 0);
-                    })),
-                fn ($q) => $q->join('tb_purchases as pur', 'ig.purchase_id', '=', 'pur.id')
-                             ->where('pur.store_id', $storeId)
-                             ->when(Schema::hasColumn('tb_incoming_goods', 'is_pending_stock'),
-                                 fn ($q2) => $q2->where(function ($w) {
-                                     $w->whereNull('ig.is_pending_stock')
-                                       ->orWhere('ig.is_pending_stock', 0);
-                                 }))
+                       ->orWhere('pur.store_id', $storeId);
+                }),
+                fn ($q) => $q->where('pur.store_id', $storeId)
             )
+            ->when(Schema::hasColumn('tb_incoming_goods', 'is_pending_stock'), function ($q) {
+                $q->where(function ($w) {
+                    $w->whereNull('ig.is_pending_stock')
+                        ->orWhere('ig.is_pending_stock', 0);
+                });
+            })
             ->select('ig.product_id', DB::raw('SUM(ig.stock) AS total_in'))
             ->groupBy('ig.product_id');
 
@@ -343,6 +383,13 @@ class OrderStockController extends Controller
                 Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
                 fn ($q) => $q->whereNull('og.deleted_at')
             )
+            ->when(
+                Schema::hasColumn('tb_sells', 'deleted_at'),
+                fn ($q) => $q->whereNull('sl.deleted_at')
+            )
+            // Penjualan normal tetap dihitung. Quantity negatif/ekstrem tidak
+            // boleh mengubah saldo atau membuat kebutuhan PO palsu.
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->when(Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
                 function ($q) {
                     $q->where(function ($qq) {
@@ -378,5 +425,18 @@ class OrderStockController extends Controller
         ->whereRaw('COALESCE(st.min_stock,0) > 0')
         ->whereRaw('(COALESCE(incoming.total_in, 0) - COALESCE(outgoing.total_out, 0)) <= COALESCE(st.min_stock, 0)')
         ->orderBy('p.product_name');
+    }
+
+    private function defaultPoQuantity($stockSystem, $maxStock): int
+    {
+        $stock = (int) $stockSystem;
+        $max = max(0, (int) $maxStock);
+
+        // Saldo negatif existing tidak boleh diterjemahkan menjadi kebutuhan PO
+        // sebesar nilai minusnya. Gunakan stok aman 0 sebagai dasar default;
+        // admin tetap dapat mengubah qty secara manual bila memang diperlukan.
+        $safeStock = max(0, $stock);
+
+        return min(self::MAX_PO_QUANTITY, max(0, $max - $safeStock));
     }
 }

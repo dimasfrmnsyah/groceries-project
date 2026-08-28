@@ -14,9 +14,16 @@ class tb_daily_revenues extends Model
 
     protected $fillable = [
         'user_id',
+        'store_id',
         'date',
         'amount',
+        'denominations',
         'uuid'
+    ];
+
+    protected $casts = [
+        'amount' => 'decimal:2',
+        'denominations' => 'array',
     ];
     
     // Relasi ke user jika dibutuhkan

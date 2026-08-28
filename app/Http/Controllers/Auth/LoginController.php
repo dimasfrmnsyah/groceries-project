@@ -4,8 +4,10 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Foundation\Auth\AuthenticatesUsers;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Schema;
 use App\Support\MenuHelper;
 class LoginController extends Controller
 {
@@ -21,6 +23,30 @@ class LoginController extends Controller
     */
 
     use AuthenticatesUsers;
+
+    /**
+     * Jangan izinkan logout bawaan melewati kewajiban setoran kasir terkunci.
+     * Tombol normal memakai StaffController, tetapi endpoint /logout juga
+     * harus aman jika dipanggil langsung atau dari browser lama.
+     */
+    public function logout(Request $request)
+    {
+        $user = $request->user();
+        $role = strtolower(trim((string) ($user?->roles ?? '')));
+
+        if ($user
+            && in_array($role, ['staff', 'kasir', 'cashier'], true)
+            && Schema::hasColumn('users', 'is_lock')
+            && (bool) $user->is_lock) {
+            return redirect()->back()->with('revenue_error', 'Akun kasir terkunci. Masukkan pendapatan harian terlebih dahulu.');
+        }
+
+        $this->guard()->logout();
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
+
+        return $this->loggedOut($request) ?: redirect('/');
+    }
 
     /**
      * Where to redirect users after login.

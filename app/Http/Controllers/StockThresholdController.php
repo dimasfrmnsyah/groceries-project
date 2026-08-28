@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use App\Support\StockLedger;
 
 class StockThresholdController extends Controller
 {
@@ -60,6 +61,7 @@ class StockThresholdController extends Controller
                                        ->orWhere('ig.is_pending_stock', 0);
                                  }))
             )
+            ->whereBetween('ig.stock', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->select('ig.product_id', DB::raw('SUM(ig.stock) AS total_in'))
             ->groupBy('ig.product_id');
 
@@ -77,6 +79,7 @@ class StockThresholdController extends Controller
                            ->orWhere('og.is_pending_stock', 0);
                     });
                 })
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->select('og.product_id', DB::raw('SUM(og.quantity_out) AS total_out'))
             ->groupBy('og.product_id');
 
@@ -120,6 +123,7 @@ class StockThresholdController extends Controller
                            ->orWhere('og.is_pending_stock', 0);
                     });
                 })
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->whereBetween(DB::raw($dateExpr), [$avgStart, $avgEnd])
             ->select('og.product_id', DB::raw('SUM(og.quantity_out) AS total_sold'))
             ->groupBy('og.product_id');

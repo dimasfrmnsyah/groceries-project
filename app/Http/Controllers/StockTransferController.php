@@ -12,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
+use App\Support\StockLedger;
 
 class StockTransferController extends Controller
 {
@@ -165,6 +166,7 @@ class StockTransferController extends Controller
                 });
             })
             ->where('ig.product_id', $productId)
+            ->whereBetween('ig.stock', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->sum('ig.stock');
 
         $outgoing = DB::table('tb_outgoing_goods as og')
@@ -178,6 +180,7 @@ class StockTransferController extends Controller
             })
             ->where('s.store_id', $storeId)
             ->where('og.product_id', $productId)
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->sum('og.quantity_out');
 
         return max(0, (int) $incoming - (int) $outgoing);

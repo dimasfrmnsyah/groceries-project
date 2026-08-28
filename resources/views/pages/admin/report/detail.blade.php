@@ -6,7 +6,7 @@
 
 @section('content')
 <div class="page-breadcrumb d-none d-sm-flex align-items-center mb-3">
-  <div class="breadcrumb-title pe-3">Detail Penjualan</div>
+  <div class="breadcrumb-title pe-3">Detail Pendapatan Kasir</div>
 </div>
 
 <div class="card mb-3">
@@ -18,6 +18,32 @@
     </div>
   </div>
 </div>
+
+@php
+  $revenueDenominations = is_array($revenue->denominations ?? null)
+      ? $revenue->denominations
+      : (json_decode((string) ($revenue->denominations ?? ''), true) ?: []);
+  $revenueDenominationOptions = \App\Support\CashDenominations::all();
+@endphp
+@if($revenueDenominations)
+<div class="card mb-3">
+  <div class="card-body">
+    <h6 class="mb-3 text-uppercase">Rincian Uang Saat Logout</h6>
+    <div class="row g-2">
+      @foreach($revenueDenominationOptions as $key => $option)
+        @if((int) ($revenueDenominations[$key] ?? 0) > 0)
+          <div class="col-md-4 col-sm-6">
+            <div class="border rounded p-2 d-flex justify-content-between gap-2">
+              <span>{{ $option['label'] }}</span>
+              <strong>{{ number_format((int) $revenueDenominations[$key], 0, ',', '.') }}</strong>
+            </div>
+          </div>
+        @endif
+      @endforeach
+    </div>
+  </div>
+</div>
+@endif
 
 <div class="card">
   <div class="card-body">

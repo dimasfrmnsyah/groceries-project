@@ -14,6 +14,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Str;
 use Yajra\DataTables\Facades\DataTables;
 use Illuminate\Validation\Rule;
+use App\Support\StockLedger;
 
 class TbPurchaseController extends Controller
 {
@@ -100,7 +101,7 @@ class TbPurchaseController extends Controller
             'integer',
             Rule::exists('tb_products', 'id')->where(fn ($query) => $query->where('is_active', 1)),
         ],
-        'products.*.stock' => 'required|integer|min:1',
+        'products.*.stock' => 'required|integer|min:1|max:100000',
         'products.*.description' => 'nullable|string',
         'supplier_budget' => 'nullable|numeric|min:0',
     ]);
@@ -237,7 +238,7 @@ class TbPurchaseController extends Controller
                         ->orWhereIn('id', $existingProductIds->all());
                 }),
             ],
-            'products.*.stock' => 'required|integer|min:1',
+            'products.*.stock' => 'required|integer|min:1|max:100000',
             'products.*.description' => 'nullable|string',
         ]);
         $productPrices = tb_products::whereIn('id', collect($validated['products'])->pluck('product_id')->all())
@@ -261,6 +262,7 @@ class TbPurchaseController extends Controller
                     ->where('ig.product_id', $productId)
                     ->whereNull('ig.deleted_at')
                     ->whereNotIn('ig.id', $oldIds)
+                    ->whereBetween('ig.stock', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
                     ->sum('ig.stock');
                 $outgoing = DB::table('tb_outgoing_goods as og')
                     ->join('tb_sells as s', 's.id', '=', 'og.sell_id')
@@ -268,6 +270,7 @@ class TbPurchaseController extends Controller
                     ->where('og.product_id', $productId)
                     ->when(Schema::hasColumn('tb_outgoing_goods', 'deleted_at'), fn ($q) => $q->whereNull('og.deleted_at'))
                     ->when(Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'), fn ($q) => $q->where('og.is_pending_stock', 0))
+                    ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
                     ->sum('og.quantity_out');
                 $newStock = collect($validated['products'])->where('product_id', $productId)->sum('stock');
                 if ((int) $incoming - (int) $outgoing + (int) $newStock < 0) {
@@ -348,6 +351,7 @@ class TbPurchaseController extends Controller
                     ->where('ig.product_id', $productId)
                     ->whereNull('ig.deleted_at')
                     ->whereNotIn('ig.id', $oldIds)
+                    ->whereBetween('ig.stock', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
                     ->sum('ig.stock');
                 $outgoing = DB::table('tb_outgoing_goods as og')
                     ->join('tb_sells as s', 's.id', '=', 'og.sell_id')
@@ -355,6 +359,7 @@ class TbPurchaseController extends Controller
                     ->where('og.product_id', $productId)
                     ->when(Schema::hasColumn('tb_outgoing_goods', 'deleted_at'), fn ($q) => $q->whereNull('og.deleted_at'))
                     ->when(Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'), fn ($q) => $q->where('og.is_pending_stock', 0))
+                    ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
                     ->sum('og.quantity_out');
                 if ((int) $incoming - (int) $outgoing < 0) {
                     throw new \RuntimeException('Pembelian tidak dapat dihapus karena stoknya sudah dipakai penjualan.');

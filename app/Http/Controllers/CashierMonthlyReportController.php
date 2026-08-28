@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Yajra\DataTables\Facades\DataTables;
+use App\Support\StockLedger;
 
 class CashierMonthlyReportController extends Controller
 {
@@ -89,7 +90,12 @@ class CashierMonthlyReportController extends Controller
                 Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
                 fn ($q) => $q->whereNull('og.deleted_at')
             )
+            ->when(
+                Schema::hasColumn('tb_sells', 'deleted_at'),
+                fn ($q) => $q->whereNull('s.deleted_at')
+            )
             ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId))
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->whereBetween(DB::raw($dateExpr), [$startDate->startOfDay(), $endDate->endOfDay()])
             ->whereIn(DB::raw($monthExpr), $targetMonths)
             ->whereNotNull('og.recorded_by')
@@ -228,7 +234,12 @@ class CashierMonthlyReportController extends Controller
                 Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
                 fn ($q) => $q->whereNull('og.deleted_at')
             )
+            ->when(
+                Schema::hasColumn('tb_sells', 'deleted_at'),
+                fn ($q) => $q->whereNull('s.deleted_at')
+            )
             ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId))
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->whereBetween(DB::raw($dateExpr), [$startDate->startOfDay(), $endDate->endOfDay()])
             ->whereRaw('LOWER(TRIM(og.recorded_by)) = ?', [$cashierKey])
             ->selectRaw("

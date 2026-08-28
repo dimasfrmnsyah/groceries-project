@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -11,10 +12,12 @@ use App\Models\tb_stores;
 use App\Models\tb_products;
 use App\Models\tb_stock_opnames;
 use App\Support\MenuHelper;
+use App\Support\StockLedger;
 
 class InventoryController extends Controller
 {
-    // Batas bisnis, bukan batas tipe data. Nilai ekstrem harus melalui audit manual.
+    // Batas bisnis, bukan batas tipe data. Nilai ekstrem pada movement
+    // tidak boleh mengubah saldo operasional atau memicu PO otomatis.
     private const MAX_STOCK_OPNAME_QUANTITY = 10000;
 
     /** Detik. Lock "processing" dianggap basi setelah ini agar request yang mati (timeout) tidak memblok selamanya. */
@@ -67,6 +70,7 @@ class InventoryController extends Controller
                     });
                 }
             )
+            ->whereBetween('ig.stock', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->select('ig.product_id', DB::raw('SUM(ig.stock) AS total_in'))
             ->groupBy('ig.product_id');
 
@@ -86,6 +90,7 @@ class InventoryController extends Controller
                     });
                 }
             )
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->select('og.product_id', DB::raw('SUM(og.quantity_out) AS total_out'))
             ->groupBy('og.product_id');
 
@@ -121,6 +126,17 @@ class InventoryController extends Controller
             )
             ->orderBy('pr.product_name')
             ->get();
+
+        // Tampilkan saldo dengan sumber perhitungan yang sama dengan preview,
+        // penyimpanan opname, dan kasir. Ini mencegah angka layar berbeda dari
+        // angka yang benar-benar dipakai saat transaksi disimpan.
+        $cleanStocks = $this->currentStockByProductIds(
+            (int) $storeId,
+            $query->pluck('product_id')->map(fn ($id) => (int) $id)->all()
+        );
+        $query->each(function ($row) use ($cleanStocks) {
+            $row->system_stock_raw = (int) ($cleanStocks[(int) $row->product_id] ?? 0);
+        });
 
         $stores = $canSelectStore ? store_access_list($user) : collect();
         $draftQuantities = [];
@@ -247,20 +263,8 @@ class InventoryController extends Controller
                 // Stock opname adalah movement resmi dan langsung memengaruhi saldo.
                 $isPending = 0;
 
-                $incomingDeletedSql = Schema::hasColumn('tb_incoming_goods', 'deleted_at')
-                    ? ' AND ig.deleted_at IS NULL'
-                    : '';
-                $outgoingDeletedSql = Schema::hasColumn('tb_outgoing_goods', 'deleted_at')
-                    ? ' AND og.deleted_at IS NULL'
-                    : '';
                 $hasIncomingStore = Schema::hasColumn('tb_incoming_goods', 'store_id');
                 $hasOutgoingStore = Schema::hasColumn('tb_outgoing_goods', 'store_id');
-                $incomingPendingSql = Schema::hasColumn('tb_incoming_goods', 'is_pending_stock')
-                    ? ' AND (ig.is_pending_stock IS NULL OR ig.is_pending_stock = 0)'
-                    : '';
-                $outgoingPendingSql = Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock')
-                    ? ' AND (og.is_pending_stock IS NULL OR og.is_pending_stock = 0)'
-                    : '';
 
                 $supplier = DB::select('SELECT id FROM tb_suppliers WHERE code = ? LIMIT 1', ['SO-ADJ']);
                 $supplierId = $supplier ? (int)$supplier[0]->id : null;
@@ -276,32 +280,12 @@ class InventoryController extends Controller
                 $productIds = array_values(array_unique(array_filter(array_column($items, 'product_id'))));
                 if (empty($productIds)) return;
 
+                // Gunakan saldo yang sama dengan preview, halaman inventory,
+                // dan transaksi kasir. Semua transaksi normal dihitung;
+                // hanya adjustment SO yang jelas tidak valid yang diabaikan.
+                $availableStock = $this->currentStockByProductIds($storeId, $productIds);
+
                 $ph = fn($n) => implode(',', array_fill(0, $n, '?'));
-
-                $paramsIn = array_merge([$storeId], $productIds);
-                $rowsIn = DB::select(
-                    'SELECT ig.product_id, SUM(ig.stock) AS total_in
-                       FROM tb_incoming_goods ig
-                       JOIN tb_purchases p ON ig.purchase_id = p.id
-                      WHERE p.store_id = ? AND ig.product_id IN ('.$ph(count($productIds)).')'.$incomingDeletedSql.$incomingPendingSql.'
-                   GROUP BY ig.product_id',
-                    $paramsIn
-                );
-                $incoming = [];
-                foreach ($rowsIn as $r) { $incoming[(int)$r->product_id] = (int)$r->total_in; }
-
-                $paramsOut = array_merge([$storeId], $productIds);
-                $rowsOut = DB::select(
-                    'SELECT og.product_id, SUM(og.quantity_out) AS total_out
-                       FROM tb_outgoing_goods og
-                       JOIN tb_sells sl ON og.sell_id = sl.id
-                      WHERE sl.store_id = ? AND og.product_id IN ('.$ph(count($productIds)).')'.$outgoingDeletedSql.$outgoingPendingSql.'
-                   GROUP BY og.product_id',
-                    $paramsOut
-                );
-                $outgoing = [];
-                foreach ($rowsOut as $r) { $outgoing[(int)$r->product_id] = (int)$r->total_out; }
-
                 $rowsPrice = DB::select(
                     'SELECT p.id, COALESCE(sp.purchase_price, p.purchase_price) AS purchase_price
                        FROM tb_products p
@@ -327,7 +311,7 @@ class InventoryController extends Controller
                     $phys = (int)$it['physical_quantity'];
                     if ($pid <= 0) continue;
 
-                    $system = (int)($incoming[$pid] ?? 0) - (int)($outgoing[$pid] ?? 0);
+                    $system = (int) ($availableStock[$pid] ?? 0);
                     $this->assertReasonableStockAdjustment($pid, $system, $phys, $role);
 
                     $opnameRows[] = [$pid, $storeId, $phys, $system, $userId, $now, $now];
@@ -409,6 +393,8 @@ class InventoryController extends Controller
                 }
             });
 
+            Cache::forget('order_stock_summary:store:'.$storeId);
+            Cache::forget('order_stock_summary:all');
             $message = "[$ver] Stock opname tersimpan. Pembelian dibuat jika ada penambahan stok.";
             $request->session()->forget('inventory.stock_opname_preview');
 
@@ -669,19 +655,6 @@ class InventoryController extends Controller
     private function buildStockSummary(array $items, int $storeId, ?int $totalItemsOverride = null): array
     {
         $now = now();
-        $incomingDeletedSql = Schema::hasColumn('tb_incoming_goods', 'deleted_at')
-            ? ' AND ig.deleted_at IS NULL'
-            : '';
-        $outgoingDeletedSql = Schema::hasColumn('tb_outgoing_goods', 'deleted_at')
-            ? ' AND og.deleted_at IS NULL'
-            : '';
-        $incomingPendingSql = Schema::hasColumn('tb_incoming_goods', 'is_pending_stock')
-            ? ' AND (ig.is_pending_stock IS NULL OR ig.is_pending_stock = 0)'
-            : '';
-        $outgoingPendingSql = Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock')
-            ? ' AND (og.is_pending_stock IS NULL OR og.is_pending_stock = 0)'
-            : '';
-
         $storeRow = DB::table('tb_stores')
             ->select('store_name')
             ->where('id', $storeId)
@@ -705,31 +678,9 @@ class InventoryController extends Controller
             return $summary;
         }
 
+        $stockByProduct = $this->currentStockByProductIds($storeId, $productIds);
+
         $ph = fn($n) => implode(',', array_fill(0, $n, '?'));
-
-        $paramsIn = array_merge([$storeId], $productIds);
-        $rowsIn = DB::select(
-            'SELECT ig.product_id, SUM(ig.stock) AS total_in
-               FROM tb_incoming_goods ig
-               JOIN tb_purchases p ON ig.purchase_id = p.id
-              WHERE p.store_id = ? AND ig.product_id IN ('.$ph(count($productIds)).')'.$incomingDeletedSql.$incomingPendingSql.'
-           GROUP BY ig.product_id',
-            $paramsIn
-        );
-        $incoming = [];
-        foreach ($rowsIn as $r) { $incoming[(int)$r->product_id] = (int)$r->total_in; }
-
-        $paramsOut = array_merge([$storeId], $productIds);
-        $rowsOut = DB::select(
-            'SELECT og.product_id, SUM(og.quantity_out) AS total_out
-               FROM tb_outgoing_goods og
-               JOIN tb_sells sl ON og.sell_id = sl.id
-              WHERE sl.store_id = ? AND og.product_id IN ('.$ph(count($productIds)).')'.$outgoingDeletedSql.$outgoingPendingSql.'
-           GROUP BY og.product_id',
-            $paramsOut
-        );
-        $outgoing = [];
-        foreach ($rowsOut as $r) { $outgoing[(int)$r->product_id] = (int)$r->total_out; }
 
         $rowsProduct = DB::select(
             'SELECT id, product_code, product_name
@@ -764,7 +715,7 @@ class InventoryController extends Controller
             $phys = (int)$it['physical_quantity'];
             if ($pid <= 0) continue;
 
-            $system = (int)($incoming[$pid] ?? 0) - (int)($outgoing[$pid] ?? 0);
+            $system = (int) ($stockByProduct[$pid] ?? 0);
             $this->assertReasonableStockAdjustment($pid, $system, $phys, $role);
             $minus  = max(0, $system - $phys);
             $plus   = max(0, $phys - $system);
@@ -796,6 +747,83 @@ class InventoryController extends Controller
         $summary['net_value'] = $summary['total_plus_value'] - $summary['total_minus_value'];
 
         return $summary;
+    }
+
+    /**
+     * Hitung saldo stok operasional dari ledger yang sama untuk semua alur.
+     *
+     * Tidak ada pembedaan berdasarkan umur transaksi: movement kasir normal
+     * semuanya tetap dihitung. Yang dikeluarkan hanya movement dengan
+     * quantity negatif atau di luar batas bisnis.
+     */
+    private function currentStockByProductIds(int $storeId, array $productIds): array
+    {
+        if (empty($productIds)) {
+            return [];
+        }
+
+        $hasIncomingStore = Schema::hasColumn('tb_incoming_goods', 'store_id');
+        $hasPendingIn = Schema::hasColumn('tb_incoming_goods', 'is_pending_stock');
+        $hasPendingOut = Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock');
+        $hasIncomingDeleted = Schema::hasColumn('tb_incoming_goods', 'deleted_at');
+        $hasOutgoingDeleted = Schema::hasColumn('tb_outgoing_goods', 'deleted_at');
+        $hasProductDeleted = Schema::hasColumn('tb_products', 'deleted_at');
+        $hasPurchaseDeleted = Schema::hasColumn('tb_purchases', 'deleted_at');
+        $hasSellDeleted = Schema::hasColumn('tb_sells', 'deleted_at');
+
+        $incomingSub = DB::table('tb_incoming_goods as ig')
+            ->leftJoin('tb_purchases as p', 'ig.purchase_id', '=', 'p.id')
+            ->when($hasIncomingDeleted, fn ($q) => $q->whereNull('ig.deleted_at'))
+            ->when($hasPurchaseDeleted, fn ($q) => $q->whereNull('p.deleted_at'))
+            // Semua movement normal tetap dihitung, tanpa membedakan umur
+            // transaksi. Quantity di luar batas bisnis dianggap korup dan
+            // tidak boleh mengunci operasional atau memicu PO.
+            ->whereBetween('ig.stock', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
+            ->when(
+                $hasIncomingStore,
+                fn ($q) => $q->where(function ($qq) use ($storeId) {
+                    $qq->where('ig.store_id', $storeId)
+                        ->orWhere('p.store_id', $storeId);
+                }),
+                fn ($q) => $q->where('p.store_id', $storeId)
+            )
+            ->when($hasPendingIn, function ($q) {
+                $q->where(function ($qq) {
+                    $qq->whereNull('ig.is_pending_stock')
+                        ->orWhere('ig.is_pending_stock', 0);
+                });
+            })
+            ->select('ig.product_id', DB::raw('SUM(ig.stock) as total_in'))
+            ->groupBy('ig.product_id');
+
+        $outgoingSub = DB::table('tb_outgoing_goods as og')
+            ->join('tb_sells as sl', 'og.sell_id', '=', 'sl.id')
+            ->when($hasOutgoingDeleted, fn ($q) => $q->whereNull('og.deleted_at'))
+            ->when($hasSellDeleted, fn ($q) => $q->whereNull('sl.deleted_at'))
+            ->where('sl.store_id', $storeId)
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
+            ->when($hasPendingOut, function ($q) {
+                $q->where(function ($qq) {
+                    $qq->whereNull('og.is_pending_stock')
+                        ->orWhere('og.is_pending_stock', 0);
+                });
+            })
+            ->select('og.product_id', DB::raw('SUM(og.quantity_out) as total_out'))
+            ->groupBy('og.product_id');
+
+        return DB::table('tb_products as p')
+            ->where('p.is_active', 1)
+            ->when($hasProductDeleted, fn ($q) => $q->whereNull('p.deleted_at'))
+            ->leftJoinSub($incomingSub, 'incoming', fn ($join) => $join->on('incoming.product_id', '=', 'p.id'))
+            ->leftJoinSub($outgoingSub, 'outgoing', fn ($join) => $join->on('outgoing.product_id', '=', 'p.id'))
+            ->whereIn('p.id', $productIds)
+            ->select(
+                'p.id',
+                DB::raw('(COALESCE(incoming.total_in, 0) - COALESCE(outgoing.total_out, 0)) as current_stock')
+            )
+            ->pluck('current_stock', 'id')
+            ->map(fn ($stock) => (int) $stock)
+            ->all();
     }
 
     private function normalizePhysicalQuantity($value): int

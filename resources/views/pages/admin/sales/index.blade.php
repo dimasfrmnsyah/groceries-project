@@ -909,7 +909,17 @@
         let isPaying = false;
         const setPaymentBusy = (busy) => {
             isPaying = busy;
-            $('#btn-payment-print, #btn-payment').prop('disabled', busy);
+            document.querySelectorAll('#btn-payment-print, #btn-payment').forEach((button) => {
+                if (window.AppLoading) {
+                    if (busy) {
+                        window.AppLoading.startButton(button, 'Memproses...');
+                    } else {
+                        window.AppLoading.stopButton(button);
+                    }
+                } else {
+                    button.disabled = busy;
+                }
+            });
         };
 
         const getAjaxErrorMessage = (err) => {

@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Schema;
 use Maatwebsite\Excel\Facades\Excel;
 use Yajra\DataTables\Facades\DataTables;
 use App\Exports\ProductStockExport;
+use App\Support\StockLedger;
 
 class ProductStockController extends Controller
 {
@@ -128,6 +129,7 @@ class ProductStockController extends Controller
                     });
                 }
             )
+            ->whereBetween('ig.stock', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->select('ig.product_id', DB::raw('SUM(ig.stock) AS total_in'))
             ->groupBy('ig.product_id');
 
@@ -147,6 +149,7 @@ class ProductStockController extends Controller
                     });
                 }
             )
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->select('og.product_id', DB::raw('SUM(og.quantity_out) AS total_out'))
             ->groupBy('og.product_id');
 
