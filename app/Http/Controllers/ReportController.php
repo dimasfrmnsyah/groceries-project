@@ -276,6 +276,12 @@ class ReportController extends Controller
     if (schemaHasColumn('daily_revenues','denominations')) {
         $select[] = 'denominations';
     }
+    if (schemaHasColumn('daily_revenues','qr')) {
+        $select[] = 'qr';
+    }
+    if (schemaHasColumn('daily_revenues','pengeluaran')) {
+        $select[] = 'pengeluaran';
+    }
 
     $revenue = tb_daily_revenues::with('user:id,name')
         ->select($select)

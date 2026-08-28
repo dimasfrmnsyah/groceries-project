@@ -15,6 +15,8 @@
       <div><strong>Kasir:</strong> {{ $cashier }}</div>
       <div><strong>Tanggal:</strong> {{ \Carbon\Carbon::parse($revenue->date)->format('d M Y') }}</div>
       <div><strong>Total (Daily):</strong> Rp {{ number_format($revenue->amount, 0, ',', '.') }}</div>
+      <div><strong>QR:</strong> Rp {{ number_format((float) ($revenue->qr ?? 0), 0, ',', '.') }}</div>
+      <div><strong>Pengeluaran:</strong> Rp {{ number_format((float) ($revenue->pengeluaran ?? 0), 0, ',', '.') }}</div>
     </div>
   </div>
 </div>

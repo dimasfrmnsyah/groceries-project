@@ -162,9 +162,56 @@
                                 @endforeach
                             </div>
                         @endforeach
+                        <div class="row g-3 mt-3">
+                            <div class="col-md-6">
+                                <label for="revenue-qr" class="form-label fw-semibold">QR</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">Rp</span>
+                                    <input type="number"
+                                           name="qr"
+                                           id="revenue-qr"
+                                           value="{{ old('qr', 0) }}"
+                                           min="0"
+                                           max="999999999999.99"
+                                           step="1"
+                                           inputmode="numeric"
+                                           class="form-control text-end"
+                                           aria-label="Total pembayaran QR">
+                                </div>
+                                <small class="text-muted">Total pembayaran melalui QR hari ini.</small>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="revenue-pengeluaran" class="form-label fw-semibold">Pengeluaran</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">Rp</span>
+                                    <input type="number"
+                                           name="pengeluaran"
+                                           id="revenue-pengeluaran"
+                                           value="{{ old('pengeluaran', 0) }}"
+                                           min="0"
+                                           max="999999999999.99"
+                                           step="1"
+                                           inputmode="numeric"
+                                           class="form-control text-end"
+                                           aria-label="Total pengeluaran">
+                                </div>
+                                <small class="text-muted">Pengeluaran kas yang terjadi hari ini.</small>
+                            </div>
+                        </div>
                         <div class="rounded border bg-light p-3 mt-4">
-                            <div class="text-muted small">Total pendapatan yang dihitung</div>
-                            <div class="fs-3 fw-bold" id="revenue-total-display">Rp 0</div>
+                            <div class="d-flex justify-content-between text-muted small">
+                                <span>Uang fisik</span><span id="revenue-cash-display">Rp 0</span>
+                            </div>
+                            <div class="d-flex justify-content-between text-muted small">
+                                <span>QR</span><span id="revenue-qr-display">Rp 0</span>
+                            </div>
+                            <div class="d-flex justify-content-between text-muted small">
+                                <span>Pengeluaran</span><span id="revenue-expense-display">Rp 0</span>
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center mt-2 pt-2 border-top">
+                                <span class="text-muted small">Total pendapatan yang dihitung</span>
+                                <span class="fs-3 fw-bold" id="revenue-total-display">Rp 0</span>
+                            </div>
                         </div>
                         @if($revenueLockEnabled)
                             <div class="mt-3 rounded border border-warning-subtle bg-warning-subtle p-3">
@@ -198,6 +245,11 @@
         const revenueForm = document.getElementById('revenueForm');
         const revenueAmountInput = document.getElementById('amount');
         const revenueDenominationsPayload = document.getElementById('denominations-payload');
+        const revenueQrInput = document.getElementById('revenue-qr');
+        const revenuePengeluaranInput = document.getElementById('revenue-pengeluaran');
+        const revenueCashDisplay = document.getElementById('revenue-cash-display');
+        const revenueQrDisplay = document.getElementById('revenue-qr-display');
+        const revenueExpenseDisplay = document.getElementById('revenue-expense-display');
         const revenueTotalDisplay = document.getElementById('revenue-total-display');
         const revenueSubmitButton = document.getElementById('revenueSubmitButton');
         const revenueValidationMessage = document.getElementById('revenueValidationMessage');
@@ -207,19 +259,25 @@
         const revenueRupiah = (value) => 'Rp ' + Number(value || 0).toLocaleString('id-ID');
 
         const calculateRevenueAmount = () => {
-            let total = 0;
+            let cashTotal = 0;
             const counts = {};
             document.querySelectorAll('.revenue-denomination-row').forEach((row) => {
                 const input = row.querySelector('.revenue-denomination-count');
                 const count = Math.max(0, Math.trunc(Number(input?.value || 0)));
                 const subtotal = count * Number(row.dataset.value || 0);
                 counts[row.dataset.key] = count;
-                total += subtotal;
+                cashTotal += subtotal;
                 const subtotalNode = row.querySelector('.revenue-denomination-subtotal');
                 if (subtotalNode) subtotalNode.textContent = revenueRupiah(subtotal);
             });
+            const qr = Math.max(0, Number(revenueQrInput?.value || 0));
+            const pengeluaran = Math.max(0, Number(revenuePengeluaranInput?.value || 0));
+            const total = cashTotal + qr + pengeluaran;
             if (revenueAmountInput) revenueAmountInput.value = String(total);
             if (revenueDenominationsPayload) revenueDenominationsPayload.value = JSON.stringify(counts);
+            if (revenueCashDisplay) revenueCashDisplay.textContent = revenueRupiah(cashTotal);
+            if (revenueQrDisplay) revenueQrDisplay.textContent = revenueRupiah(qr);
+            if (revenueExpenseDisplay) revenueExpenseDisplay.textContent = revenueRupiah(pengeluaran);
             if (revenueTotalDisplay) revenueTotalDisplay.textContent = revenueRupiah(total);
             return total;
         };
@@ -270,6 +328,12 @@
         };
 
         document.querySelectorAll('.revenue-denomination-count').forEach((input) => input.addEventListener('input', () => {
+            calculateRevenueAmount();
+            if (!revenueLocked) return;
+            window.clearTimeout(revenueValidationTimer);
+            revenueValidationTimer = window.setTimeout(validateRevenueAmount, 250);
+        }));
+        [revenueQrInput, revenuePengeluaranInput].forEach((input) => input?.addEventListener('input', () => {
             calculateRevenueAmount();
             if (!revenueLocked) return;
             window.clearTimeout(revenueValidationTimer);

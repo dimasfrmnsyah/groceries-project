@@ -17,12 +17,16 @@ class tb_daily_revenues extends Model
         'store_id',
         'date',
         'amount',
+        'qr',
+        'pengeluaran',
         'denominations',
         'uuid'
     ];
 
     protected $casts = [
         'amount' => 'decimal:2',
+        'qr' => 'decimal:2',
+        'pengeluaran' => 'decimal:2',
         'denominations' => 'array',
     ];
     

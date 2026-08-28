@@ -42,6 +42,8 @@ class StaffController extends Controller
 
         $data = $request->validate([
             'amount' => ['nullable', 'numeric', 'min:0'],
+            'qr' => ['nullable', 'numeric', 'min:0', 'max:999999999999.99'],
+            'pengeluaran' => ['nullable', 'numeric', 'min:0', 'max:999999999999.99'],
             'denominations_payload' => ['nullable', 'json'],
             'denominations' => ['nullable', 'array'],
         ]);
@@ -60,11 +62,13 @@ class StaffController extends Controller
                 $data['denominations'] ?? null
             )
             : null;
+        $qr = (float) ($data['qr'] ?? 0);
+        $pengeluaran = (float) ($data['pengeluaran'] ?? 0);
         // Kompatibilitas browser lama: sebelum rincian pecahan tersedia,
         // nominal lama tetap boleh dipakai. Browser baru selalu mengirim
         // denominations sehingga nominal dihitung ulang di server.
         $calculatedAmount = $denominations !== null
-            ? $this->denominationsTotal($denominations)
+            ? $this->denominationsTotal($denominations) + $qr + $pengeluaran
             : (float) ($data['amount'] ?? 0);
 
         if ($this->isRevenueLocked($user)) {
@@ -83,6 +87,12 @@ class StaffController extends Controller
         ];
         if (Schema::hasColumn('daily_revenues', 'store_id')) {
             $revenuePayload['store_id'] = $this->userStoreId($user);
+        }
+        if (Schema::hasColumn('daily_revenues', 'qr')) {
+            $revenuePayload['qr'] = $qr;
+        }
+        if (Schema::hasColumn('daily_revenues', 'pengeluaran')) {
+            $revenuePayload['pengeluaran'] = $pengeluaran;
         }
         if ($denominations !== null && Schema::hasColumn('daily_revenues', 'denominations')) {
             $revenuePayload['denominations'] = $denominations;
