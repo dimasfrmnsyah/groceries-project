@@ -134,9 +134,22 @@ class TbProductsController extends Controller
 
     public function edit($id)
     {
+        $product = tb_products::with('storePrices')->findOrFail($id);
+
+        // Produk lama tetap dapat diedit walaupun jenisnya sudah dinonaktifkan.
+        // Jenis tersebut hanya ditampilkan untuk produk ini agar type_id tidak
+        // berubah/terhapus secara tidak sengaja saat form disimpan.
+        $types = tb_types::withTrashed()
+            ->where(function ($query) use ($product) {
+                $query->whereNull('deleted_at')
+                    ->orWhere('id', $product->type_id);
+            })
+            ->orderBy('type_name')
+            ->get();
+
         return view('pages.admin.master.manage_product.create', [
-            'product' => tb_products::with('storePrices')->findOrFail($id),
-            'types'   => tb_types::all(),
+            'product' => $product,
+            'types'   => $types,
             'brands'  => tb_brands::all(),
             'units'   => tb_units::all(),
             'stores'  => tb_stores::all(),

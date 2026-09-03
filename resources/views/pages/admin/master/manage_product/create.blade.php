@@ -50,7 +50,7 @@
                 <option value="">- pilih -</option>
                 @foreach($types as $t)
                   <option value="{{ $t->id }}" @selected(old('type_id', $product->type_id ?? '') == $t->id)>
-                    {{ $t->type_name ?? $t->name }}
+                    {{ $t->type_name ?? $t->name }}{{ $t->trashed() ? ' (Inactive)' : '' }}
                   </option>
                 @endforeach
               </select>

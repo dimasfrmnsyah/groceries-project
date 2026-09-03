@@ -106,24 +106,6 @@ class TbTypesController extends Controller
             ], 404);
         }
 
-        // Jangan menghapus type yang masih dipakai produk. Mengosongkan
-        // type_id otomatis dapat mengubah hasil laporan dan data produk.
-        $productCount = DB::table('tb_products')
-            ->where('type_id', $type->id)
-            ->count();
-
-        if ($productCount > 0) {
-            return response()->json([
-                'success' => false,
-                'message' => sprintf(
-                    'Jenis "%s" masih digunakan oleh %d produk. Ubah jenis produk terlebih dahulu.',
-                    $type->type_name,
-                    $productCount
-                ),
-                'used_count' => $productCount,
-            ], 409);
-        }
-
         try {
             DB::transaction(function () use ($type) {
                 // Model menggunakan SoftDeletes, jadi data historis tetap aman.
@@ -132,7 +114,7 @@ class TbTypesController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Jenis berhasil dihapus.',
+                'message' => 'Jenis berhasil dinonaktifkan.',
             ]);
         } catch (\Throwable $e) {
             report($e);

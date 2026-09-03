@@ -55,7 +55,7 @@
     let token = $("meta[name='csrf-token']").attr("content");
     Swal.fire({
         title: 'Apakah Anda yakin?',
-        text: "Jenis hanya dapat dihapus jika belum digunakan oleh produk.",
+        text: "Jenis akan dinonaktifkan dari daftar pilihan. Data produk dan riwayat transaksi tetap aman.",
         icon: 'warning',
         showCancelButton: true,
         confirmButtonColor: '#3085d6',
