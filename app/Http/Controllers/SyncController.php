@@ -204,6 +204,19 @@ class SyncController extends Controller
                         $row = array_intersect_key($row, array_flip($tcols));
                     } catch (\Throwable $e) {}
 
+                    // Penjualan kasir selalu langsung mengurangi stok. Perangkat
+                    // offline lama mungkin mengirim flag pending=1; normalisasi
+                    // hanya untuk movement yang sudah jelas bertipe sale, tanpa
+                    // menyentuh SO, transfer, atau AR.
+                    if (
+                        $table === 'tb_outgoing_goods'
+                        && Schema::hasColumn('tb_outgoing_goods', 'source_type')
+                        && Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock')
+                        && strcasecmp(trim((string) ($row['source_type'] ?? '')), 'sale') === 0
+                    ) {
+                        $row['is_pending_stock'] = 0;
+                    }
+
                     $row['uuid'] = $uuid;
                     DB::table($table)->updateOrInsert(['uuid'=>$uuid], $row);
 

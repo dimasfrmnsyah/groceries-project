@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use App\Models\tb_master_menus;
+use App\Support\StockLedger;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -88,13 +89,14 @@ class AppServiceProvider extends ServiceProvider
                 Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
                 fn ($q) => $q->whereNull('og.deleted_at')
             )
-            ->when(Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
-                function ($q) {
-                    $q->where(function ($qq) {
-                        $qq->whereNull('og.is_pending_stock')
-                           ->orWhere('og.is_pending_stock', 0);
-                    });
-                })
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY]);
+        StockLedger::applyOutgoingBalanceFilter(
+            $outgoingSub,
+            Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
+            'og',
+            'sl'
+        );
+        $outgoingSub
             ->select('og.product_id', DB::raw('SUM(og.quantity_out) AS total_out'))
             ->groupBy('og.product_id');
 

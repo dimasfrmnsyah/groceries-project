@@ -97,20 +97,50 @@ class TbTypesController extends Controller
      */
     public function destroy($id)
     {
-        DB::beginTransaction();
+        $type = tb_types::find($id);
+
+        if (!$type) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Jenis tidak ditemukan atau sudah dihapus.',
+            ], 404);
+        }
+
+        // Jangan menghapus type yang masih dipakai produk. Mengosongkan
+        // type_id otomatis dapat mengubah hasil laporan dan data produk.
+        $productCount = DB::table('tb_products')
+            ->where('type_id', $type->id)
+            ->count();
+
+        if ($productCount > 0) {
+            return response()->json([
+                'success' => false,
+                'message' => sprintf(
+                    'Jenis "%s" masih digunakan oleh %d produk. Ubah jenis produk terlebih dahulu.',
+                    $type->type_name,
+                    $productCount
+                ),
+                'used_count' => $productCount,
+            ], 409);
+        }
+
         try {
-            tb_types::where('id', $id)->delete();
-            DB::commit();
+            DB::transaction(function () use ($type) {
+                // Model menggunakan SoftDeletes, jadi data historis tetap aman.
+                $type->delete();
+            });
+
             return response()->json([
-                'success'=>true,
-                'message'=>'Jenis berhasil di hapus',
+                'success' => true,
+                'message' => 'Jenis berhasil dihapus.',
             ]);
-        }catch(\Exception $e) {
-            DB::rollBack();
+        } catch (\Throwable $e) {
+            report($e);
+
             return response()->json([
-                'success'=>false,
-                'message'=>'Jenis berhasil di hapus',
-            ]);
+                'success' => false,
+                'message' => 'Jenis gagal dihapus. Silakan coba lagi atau periksa log aplikasi.',
+            ], 500);
         }
     }
 }

@@ -55,7 +55,7 @@
     let token = $("meta[name='csrf-token']").attr("content");
     Swal.fire({
         title: 'Apakah Anda yakin?',
-        text: "Data akan dihapus permanen!",
+        text: "Jenis hanya dapat dihapus jika belum digunakan oleh produk.",
         icon: 'warning',
         showCancelButton: true,
         confirmButtonColor: '#3085d6',
@@ -71,18 +71,28 @@
                     _token: token, 
                 },
                 success: function(response) {
+                    if (!response.success) {
+                        Swal.fire({
+                            icon: 'error',
+                            title: 'Tidak dapat dihapus',
+                            text: response.message || 'Terjadi kesalahan saat menghapus data!',
+                        });
+                        return;
+                    }
+
                     Swal.fire({
                         icon: 'success',
                         title: 'Sukses',
                         text: response.message,
+                    }).then(() => {
+                        $('#table-type').DataTable().ajax.reload(null, false);
                     });
-                    $('#table-type').DataTable().ajax.reload(); 
                 },
                 error: function(err) {
                     Swal.fire({
                         icon: 'error',
-                        title: 'Oops...',
-                        text: err.responseJSON.message || 'Terjadi kesalahan saat menghapus data!',
+                        title: err.status === 409 ? 'Tidak dapat dihapus' : 'Oops...',
+                        text: err.responseJSON?.message || 'Terjadi kesalahan saat menghapus data!',
                     });
                 }
             });

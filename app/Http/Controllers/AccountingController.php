@@ -994,16 +994,16 @@ class AccountingController extends Controller
         $outgoing = DB::table('tb_outgoing_goods as og')
             ->join('tb_sells as s', 's.id', '=', 'og.sell_id')
             ->when(Schema::hasColumn('tb_outgoing_goods', 'deleted_at'), fn ($q) => $q->whereNull('og.deleted_at'))
-            ->when(Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'), function ($q) {
-                $q->where(function ($qq) {
-                    $qq->whereNull('og.is_pending_stock')
-                       ->orWhere('og.is_pending_stock', 0);
-                });
-            })
             ->where('s.store_id', $storeId)
             ->where('og.product_id', $productId)
-            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
-            ->sum('og.quantity_out');
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY]);
+        StockLedger::applyOutgoingBalanceFilter(
+            $outgoing,
+            Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
+            'og',
+            's'
+        );
+        $outgoing = $outgoing->sum('og.quantity_out');
 
         return max(0, (int) $incoming - (int) $outgoing);
     }

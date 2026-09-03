@@ -225,13 +225,9 @@ class TbIncomingGoodsController extends Controller
             ->join('tb_sells as sl', 'og.sell_id', '=', 'sl.id')
             ->when($hasOutgoingDeleted, fn($q) => $q->whereNull('og.deleted_at'))
             ->where('sl.store_id', $storeId)
-            ->when($hasPendingOut, function ($q) {
-                $q->where(function ($qq) {
-                    $qq->whereNull('og.is_pending_stock')
-                       ->orWhere('og.is_pending_stock', 0);
-                });
-            })
-            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY]);
+        StockLedger::applyOutgoingBalanceFilter($outgoingSub, $hasPendingOut, 'og', 'sl');
+        $outgoingSub
             ->select('og.product_id', DB::raw('SUM(og.quantity_out) as total_out'))
             ->groupBy('og.product_id');
 

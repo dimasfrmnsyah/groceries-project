@@ -176,12 +176,14 @@ class ItemMovingController extends Controller
             ->join('tb_sells as s', 's.id', '=', 'og.sell_id')
             ->where('s.store_id', $storeId)
             ->when(Schema::hasColumn('tb_outgoing_goods', 'deleted_at'), fn ($q) => $q->whereNull('og.deleted_at'))
-            ->when(Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'), function ($q) {
-                $q->where(function ($qq) {
-                    $qq->whereNull('og.is_pending_stock')->orWhere('og.is_pending_stock', 0);
-                });
-            })
-            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY]);
+        StockLedger::applyOutgoingBalanceFilter(
+            $outgoingSub,
+            Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
+            'og',
+            's'
+        );
+        $outgoingSub
             ->select('og.product_id', DB::raw('SUM(og.quantity_out) as total_out'))
             ->groupBy('og.product_id');
 

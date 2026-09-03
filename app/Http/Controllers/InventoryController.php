@@ -81,16 +81,14 @@ class InventoryController extends Controller
                 Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
                 fn($q) => $q->whereNull('og.deleted_at')
             )
-            ->when(
-                Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
-                function ($q) {
-                    $q->where(function ($qq) {
-                        $qq->whereNull('og.is_pending_stock')
-                           ->orWhere('og.is_pending_stock', 0);
-                    });
-                }
-            )
-            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY]);
+        StockLedger::applyOutgoingBalanceFilter(
+            $outgoingSub,
+            Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
+            'og',
+            'sl'
+        );
+        $outgoingSub
             ->select('og.product_id', DB::raw('SUM(og.quantity_out) AS total_out'))
             ->groupBy('og.product_id');
 
@@ -801,13 +799,9 @@ class InventoryController extends Controller
             ->when($hasOutgoingDeleted, fn ($q) => $q->whereNull('og.deleted_at'))
             ->when($hasSellDeleted, fn ($q) => $q->whereNull('sl.deleted_at'))
             ->where('sl.store_id', $storeId)
-            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
-            ->when($hasPendingOut, function ($q) {
-                $q->where(function ($qq) {
-                    $qq->whereNull('og.is_pending_stock')
-                        ->orWhere('og.is_pending_stock', 0);
-                });
-            })
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY]);
+        StockLedger::applyOutgoingBalanceFilter($outgoingSub, $hasPendingOut, 'og', 'sl');
+        $outgoingSub
             ->select('og.product_id', DB::raw('SUM(og.quantity_out) as total_out'))
             ->groupBy('og.product_id');
 

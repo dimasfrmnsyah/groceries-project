@@ -340,14 +340,14 @@ public function index(Request $request)
                 Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
                 fn ($q) => $q->whereNull('og.deleted_at')
             )
-            ->when(Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
-                function ($q) {
-                    $q->where(function ($qq) {
-                        $qq->whereNull('og.is_pending_stock')
-                           ->orWhere('og.is_pending_stock', 0);
-                    });
-                })
-            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY]);
+        StockLedger::applyOutgoingBalanceFilter(
+            $outgoingSub,
+            Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
+            'og',
+            'sl'
+        );
+        $outgoingSub
             ->select('og.product_id', DB::raw('SUM(og.quantity_out) AS total_out'))
             ->groupBy('og.product_id');
 
@@ -401,16 +401,14 @@ public function index(Request $request)
                 Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
                 fn ($q) => $q->whereNull('og.deleted_at')
             )
-            ->when(
-                Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
-                function ($q) {
-                    $q->where(function ($qq) {
-                        $qq->whereNull('og.is_pending_stock')
-                           ->orWhere('og.is_pending_stock', 0);
-                    });
-                }
-            )
-            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
+            ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY]);
+        StockLedger::applyOutgoingBalanceFilter(
+            $outgoingSub,
+            Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
+            'og',
+            'sl'
+        );
+        $outgoingSub
             ->select('sl.store_id', 'og.product_id', DB::raw('SUM(og.quantity_out) AS total_out'))
             ->groupBy('sl.store_id', 'og.product_id');
 

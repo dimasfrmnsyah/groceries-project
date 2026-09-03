@@ -269,9 +269,14 @@ class TbPurchaseController extends Controller
                     ->where('s.store_id', $purchase->store_id)
                     ->where('og.product_id', $productId)
                     ->when(Schema::hasColumn('tb_outgoing_goods', 'deleted_at'), fn ($q) => $q->whereNull('og.deleted_at'))
-                    ->when(Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'), fn ($q) => $q->where('og.is_pending_stock', 0))
-                    ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
-                    ->sum('og.quantity_out');
+                    ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY]);
+                StockLedger::applyOutgoingBalanceFilter(
+                    $outgoing,
+                    Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
+                    'og',
+                    's'
+                );
+                $outgoing = $outgoing->sum('og.quantity_out');
                 $newStock = collect($validated['products'])->where('product_id', $productId)->sum('stock');
                 if ((int) $incoming - (int) $outgoing + (int) $newStock < 0) {
                     throw new \RuntimeException('Produk tidak dapat dikurangi karena sebagian stoknya sudah terjual.');
@@ -358,9 +363,14 @@ class TbPurchaseController extends Controller
                     ->where('s.store_id', $purchase->store_id)
                     ->where('og.product_id', $productId)
                     ->when(Schema::hasColumn('tb_outgoing_goods', 'deleted_at'), fn ($q) => $q->whereNull('og.deleted_at'))
-                    ->when(Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'), fn ($q) => $q->where('og.is_pending_stock', 0))
-                    ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
-                    ->sum('og.quantity_out');
+                    ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY]);
+                StockLedger::applyOutgoingBalanceFilter(
+                    $outgoing,
+                    Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
+                    'og',
+                    's'
+                );
+                $outgoing = $outgoing->sum('og.quantity_out');
                 if ((int) $incoming - (int) $outgoing < 0) {
                     throw new \RuntimeException('Pembelian tidak dapat dihapus karena stoknya sudah dipakai penjualan.');
                 }
