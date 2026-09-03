@@ -270,9 +270,12 @@ class TbSalesController extends Controller
             Cache::forget('order_stock_summary:all');
             return response()->json([
                 'success' => true,
-                'message' => 'Data berhasil diproses',
+                'message' => $stockAffectsImmediately
+                    ? 'Data berhasil diproses dan stok langsung berkurang.'
+                    : 'Data berhasil disimpan. Stok akan berkurang saat toko online kembali.',
                 'sell_id' => $sell->id,
                 'invoice' => $sell->no_invoice,
+                'stock_pending' => !$stockAffectsImmediately,
             ]);
         } catch (QueryException $e) {
             // Unique idempotency_key menangani retry/request ganda yang datang bersamaan.

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\tb_stores;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
@@ -191,7 +192,7 @@ class TbStoresController extends Controller
             $online = (bool)$request->boolean('is_online');
             $note   = $request->input('offline_note');
 
-            DB::transaction(function () use ($request, $online, $note, $storeId, $user) {
+            $released = DB::transaction(function () use ($request, $online, $note, $storeId, $user) {
                 $store = tb_stores::where('id', $storeId)->lockForUpdate()->firstOrFail();
                 $previousOnline = (bool) $store->is_online;
                 if (empty($store->uuid)) {
@@ -216,13 +217,27 @@ class TbStoresController extends Controller
 
                 // jika online kembali, lepas pending stock toko ini
                 if ($online) {
-                    $this->syncPendingStockForStore($storeId);
+                    return $this->syncPendingStockForStore($storeId);
                 }
+
+                return [
+                    'sales' => 0,
+                    'sales_amount' => 0.0,
+                    'incoming_rows' => 0,
+                    'outgoing_rows' => 0,
+                ];
             });
+
+            // Saldo stok/PO memakai cache yang sama dengan kasir. Setelah
+            // pending movement diposting, cache wajib dibuang agar semua layar
+            // langsung membaca saldo terbaru.
+            Cache::forget('order_stock_summary:store:'.$storeId);
+            Cache::forget('order_stock_summary:all');
 
             return response()->json([
                 'message' => $online ? 'Store online. Pending stok diproses.' : 'Store diset offline.',
                 'is_online' => $online,
+                'released' => $released,
             ]);
         } catch (\Throwable $e) {
             \Log::error('toggleOnline error', ['msg' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
@@ -230,9 +245,15 @@ class TbStoresController extends Controller
         }
     }
 
-    private function syncPendingStockForStore(int $storeId): void
+    private function syncPendingStockForStore(int $storeId): array
     {
         $now = now();
+        $summary = [
+            'sales' => 0,
+            'sales_amount' => 0.0,
+            'incoming_rows' => 0,
+            'outgoing_rows' => 0,
+        ];
         $incomingIds = DB::table('tb_incoming_goods as ig')
             ->join('tb_purchases as p', 'p.id', '=', 'ig.purchase_id')
             ->where('p.store_id', $storeId)
@@ -251,6 +272,7 @@ class TbStoresController extends Controller
                     'synced_at'        => $now,
                     'updated_at'       => $now,
                 ]);
+            $summary['incoming_rows'] = $incomingIds->count();
         }
 
         $outgoingIds = DB::table('tb_outgoing_goods as og')
@@ -264,6 +286,12 @@ class TbStoresController extends Controller
             ->pluck('og.id');
 
         if ($outgoingIds->isNotEmpty()) {
+            $saleIds = DB::table('tb_outgoing_goods as og')
+                ->join('tb_sells as s', 's.id', '=', 'og.sell_id')
+                ->whereIn('og.id', $outgoingIds)
+                ->distinct()
+                ->pluck('s.id');
+
             DB::table('tb_outgoing_goods')
                 ->whereIn('id', $outgoingIds)
                 ->update([
@@ -271,7 +299,14 @@ class TbStoresController extends Controller
                     'synced_at'        => $now,
                     'updated_at'       => $now,
                 ]);
+            $summary['outgoing_rows'] = $outgoingIds->count();
+            $summary['sales'] = $saleIds->count();
+            $summary['sales_amount'] = (float) DB::table('tb_sells')
+                ->whereIn('id', $saleIds)
+                ->sum('total_price');
         }
+
+        return $summary;
     }
 
     private function authorizeStoreManager(): void

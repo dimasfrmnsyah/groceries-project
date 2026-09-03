@@ -22,7 +22,28 @@ class TbSellController extends Controller
         $user = auth()->user();
         $role = strtolower((string) ($user->roles ?? ''));
         $storeId = $request->filled('store_id') ? (int) $request->input('store_id') : null;
-        $query = tb_sell::with('store')
+        $saleStatus = $request->input('status', 'online');
+        if (!in_array($saleStatus, ['all', 'online', 'offline'], true)) {
+            $saleStatus = 'online';
+        }
+
+        $hasPendingStock = Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock');
+        $hasOutgoingDeleted = Schema::hasColumn('tb_outgoing_goods', 'deleted_at');
+        $pendingExists = function ($query) use ($hasPendingStock, $hasOutgoingDeleted) {
+            if (!$hasPendingStock) {
+                $query->whereRaw('1 = 0');
+                return;
+            }
+
+            $query->from('tb_outgoing_goods as pending_og')
+                ->whereColumn('pending_og.sell_id', 'tb_sells.id')
+                ->where('pending_og.is_pending_stock', 1)
+                ->when($hasOutgoingDeleted, fn ($q) => $q->whereNull('pending_og.deleted_at'));
+        };
+
+        $query = tb_sell::query()
+            ->with('store')
+            ->select('tb_sells.*')
             // Adjustment stock opname tetap tersimpan sebagai ledger, tetapi
             // tidak boleh tampil sebagai penjualan kasir biasa.
             ->where(function ($q) {
@@ -30,6 +51,26 @@ class TbSellController extends Controller
                     ->orWhere('no_invoice', 'not like', 'SO-ADJ-%');
             })
             ->orderByDesc('id');
+
+        // Penjualan offline sudah memiliki header dan invoice untuk audit, tetapi
+        // baru dianggap masuk daftar penjualan online setelah movement stoknya
+        // dilepas. Data lama tanpa flag pending tetap dianggap online.
+        if ($saleStatus === 'online') {
+            $query->whereNotExists($pendingExists);
+        } elseif ($saleStatus === 'offline') {
+            $query->whereExists($pendingExists);
+        }
+
+        if ($hasPendingStock) {
+            $query->addSelect([
+                'sale_pending' => DB::table('tb_outgoing_goods as pending_status')
+                    ->selectRaw('1')
+                    ->whereColumn('pending_status.sell_id', 'tb_sells.id')
+                    ->where('pending_status.is_pending_stock', 1)
+                    ->when($hasOutgoingDeleted, fn ($q) => $q->whereNull('pending_status.deleted_at'))
+                    ->limit(1),
+            ]);
+        }
         if ($role !== 'superadmin') {
             $allowed = store_access_ids($user);
             $query->when(!empty($allowed), fn ($q) => $q->whereIn('store_id', $allowed))
@@ -51,8 +92,7 @@ class TbSellController extends Controller
                 })
                 ->orderColumn('store.store_name', function ($query, $order) {
                     $query->leftJoin('tb_stores as stores', 'tb_sells.store_id', '=', 'stores.id')
-                        ->orderBy('stores.store_name', $order)
-                        ->select('tb_sells.*');
+                        ->orderBy('stores.store_name', $order);
                 })
                 ->addColumn('action', function ($sells) {
                     return '
@@ -62,7 +102,12 @@ class TbSellController extends Controller
                     </a>
                 </div>';
                 })
-                ->rawColumns(['action'])
+                ->addColumn('status', function ($sells) {
+                    return (int) ($sells->sale_pending ?? 0) === 1
+                        ? '<span class="badge bg-warning text-dark">Offline / Pending</span>'
+                        : '<span class="badge bg-success">Online</span>';
+                })
+                ->rawColumns(['action', 'status'])
                 ->make(true);
         }
 
@@ -70,7 +115,12 @@ class TbSellController extends Controller
         $canSelectStore = store_access_can_select($user) || in_array($role, ['superadmin', 'admin'], true);
         $selectedStoreId = $storeId;
 
-        return view('pages.admin.sell.index', compact('stores', 'canSelectStore', 'selectedStoreId'));
+        return view('pages.admin.sell.index', compact(
+            'stores',
+            'canSelectStore',
+            'selectedStoreId',
+            'saleStatus'
+        ));
     }
 
     public function detail($id)
@@ -93,9 +143,13 @@ class TbSellController extends Controller
             ->where('sell_id', $sell->id)
             ->get();
 
+        $isPending = $outgoingGoods->contains(function ($movement) {
+            return (int) ($movement->is_pending_stock ?? 0) === 1;
+        });
+
         [$products, $priceData] = $this->loadProductsAndPrices((int) $sell->store_id);
 
-        return view('pages.admin.sell.detail-readonly', compact('sell', 'outgoingGoods'));
+        return view('pages.admin.sell.detail-readonly', compact('sell', 'outgoingGoods', 'isPending'));
     }
 
     /**

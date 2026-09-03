@@ -7,6 +7,7 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use App\Support\StockLedger;
 use Yajra\DataTables\Facades\DataTables;
 
 class StoreMonthlyReportController extends Controller
@@ -90,6 +91,12 @@ class StoreMonthlyReportController extends Controller
                 s.total_price as total_price
             ");
 
+        StockLedger::applyFinalizedSaleFilter(
+            $salesBase,
+            Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
+            's',
+            Schema::hasColumn('tb_outgoing_goods', 'deleted_at')
+        );
         $excludeStockOpname($salesBase);
 
         $monthly = DB::query()
@@ -199,6 +206,12 @@ class StoreMonthlyReportController extends Controller
                 s.created_at as created_at
             ");
 
+        StockLedger::applyFinalizedSaleFilter(
+            $query,
+            Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
+            's',
+            Schema::hasColumn('tb_outgoing_goods', 'deleted_at')
+        );
         $excludeStockOpname($query);
 
         $query->orderByDesc('created_at');

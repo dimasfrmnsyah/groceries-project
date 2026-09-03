@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use App\Services\SyncService;
@@ -204,6 +205,17 @@ class SyncController extends Controller
                         $row = array_intersect_key($row, array_flip($tcols));
                     } catch (\Throwable $e) {}
 
+                    // Header penjualan lama/offline wajib memiliki nomor invoice
+                    // sebelum masuk server. Jika payload kosong, buat sekali di
+                    // sisi server agar detail penjualan tetap dapat dibuka.
+                    if (
+                        $table === 'tb_sells'
+                        && Schema::hasColumn('tb_sells', 'no_invoice')
+                        && trim((string) ($row['no_invoice'] ?? '')) === ''
+                    ) {
+                        $row['no_invoice'] = 'INV-'.now('Asia/Jakarta')->format('YmdHisv').'-'.Str::upper(Str::random(6));
+                    }
+
                     $row['uuid'] = $uuid;
                     DB::table($table)->updateOrInsert(['uuid'=>$uuid], $row);
 
@@ -334,7 +346,13 @@ class SyncController extends Controller
                         ->update($outgoingUpdate);
                 }
             }
+
+            // Push/sync juga dapat melepas pending movement. Jangan biarkan
+            // ringkasan stok/PO membaca cache sebelum posting selesai.
+            Cache::forget('order_stock_summary:store:'.$storeId);
         }
+
+        Cache::forget('order_stock_summary:all');
     }
 
     public function manual(SyncService $sync)

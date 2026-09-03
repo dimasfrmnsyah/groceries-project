@@ -122,6 +122,12 @@ public function index(Request $request)
         )
         ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
         ->select();
+    StockLedger::applyOutgoingBalanceFilter(
+        $salesQuery,
+        Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
+        'og',
+        's'
+    );
     $hppBase = DB::table('tb_outgoing_goods as og')
         ->join('tb_sells as s', 'og.sell_id', '=', 's.id')
         ->join('tb_products as p', 'og.product_id', '=', 'p.id')
@@ -134,6 +140,12 @@ public function index(Request $request)
             fn ($q) => $q->whereNull('og.deleted_at')
         );
     $hppBase->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY]);
+    StockLedger::applyOutgoingBalanceFilter(
+        $hppBase,
+        Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
+        'og',
+        's'
+    );
 
     $excludeStockOpname($salesQuery);
     $excludeStockOpname($hppBase);
@@ -170,6 +182,12 @@ public function index(Request $request)
             ->whereBetween('s.date', [$start, $end])
             ->selectRaw('s.id, s.date, s.total_price')
             ->groupBy('s.id', 's.date', 's.total_price');
+        StockLedger::applyOutgoingBalanceFilter(
+            $salesRawQuery,
+            Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
+            'og',
+            's'
+        );
         $excludeStockOpname($salesRawQuery);
         $salesRaw = $salesRawQuery->get();
 
@@ -241,6 +259,13 @@ public function index(Request $request)
         ->orderByDesc('total_sold')
         ->limit(5);
 
+    StockLedger::applyOutgoingBalanceFilter(
+        $topProductsQuery,
+        Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
+        'og',
+        's'
+    );
+
     $excludeStockOpname($topProductsQuery);
 
     if ($storeId) {
@@ -269,6 +294,12 @@ public function index(Request $request)
         )
         ->whereBetween('s.date', [$monthStart->toDateString(), $monthEnd->toDateString()])
         ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId));
+    StockLedger::applyFinalizedSaleFilter(
+        $dailyMonthQuery,
+        Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
+        's',
+        Schema::hasColumn('tb_outgoing_goods', 'deleted_at')
+    );
     $excludeStockOpname($dailyMonthQuery);
     $dailyMonthRaw = $dailyMonthQuery
         ->selectRaw('DATE(s.date) as sale_date, SUM(s.total_price) as total')

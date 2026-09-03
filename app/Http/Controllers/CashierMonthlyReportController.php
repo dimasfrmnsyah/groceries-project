@@ -102,6 +102,12 @@ class CashierMonthlyReportController extends Controller
             ->whereRaw('COALESCE(TRIM(og.recorded_by), "") <> ""')
             ->whereRaw('LOWER(COALESCE(TRIM(og.recorded_by), "")) != ?', ['stock opname']);
 
+        StockLedger::applyOutgoingBalanceFilter(
+            $salesBase,
+            Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
+            'og',
+            's'
+        );
         $excludeStockOpname($salesBase);
 
         $perSale = $salesBase
@@ -251,6 +257,12 @@ class CashierMonthlyReportController extends Controller
                 MAX(og.created_at) as last_activity
             ");
 
+        StockLedger::applyOutgoingBalanceFilter(
+            $query,
+            Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock'),
+            'og',
+            's'
+        );
         $excludeStockOpname($query);
 
         $groupBy = [

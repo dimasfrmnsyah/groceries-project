@@ -24,10 +24,10 @@
         <div class="alert alert-danger">{{ session('error') }}</div>
     @endif
 
-    @if(!empty($canSelectStore))
-        <div class="card mb-3">
-            <div class="card-body">
-                <div class="row align-items-end">
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="row align-items-end g-3">
+                @if(!empty($canSelectStore))
                     <div class="col-md-4">
                         <label class="form-label">Pilih Toko</label>
                         <select id="store-filter" class="form-select">
@@ -39,10 +39,19 @@
                             @endforeach
                         </select>
                     </div>
+                @endif
+                <div class="col-md-4">
+                    <label class="form-label">Status Penjualan</label>
+                    <select id="status-filter" class="form-select">
+                        <option value="online" {{ ($saleStatus ?? 'online') === 'online' ? 'selected' : '' }}>Online</option>
+                        <option value="offline" {{ ($saleStatus ?? 'online') === 'offline' ? 'selected' : '' }}>Offline / Pending</option>
+                        <option value="all" {{ ($saleStatus ?? 'online') === 'all' ? 'selected' : '' }}>Semua</option>
+                    </select>
+                    <small class="text-muted">Offline masuk ke Online setelah toko di-online-kan.</small>
                 </div>
             </div>
         </div>
-    @endif
+    </div>
     <div class="card">
         <div class="card-body">
             <div class="table-responsive">
@@ -56,6 +65,7 @@
                             <th>Jam</th>
                             <th>Total Pembelian</th>
                             <th>Uang Dibayarkan</th>
+                            <th>Status</th>
                             <th>Aksi</th>
                         </tr>
                     </thead>
@@ -77,13 +87,19 @@
         let sellTable = null;
 
         $(document).ready(function () {
-            const initialStoreId = $('#store-filter').val();
-            const initialUrl = initialStoreId ? `${sellBaseUrl}?store_id=${initialStoreId}` : sellBaseUrl;
+            const buildUrl = function () {
+                const params = new URLSearchParams();
+                const storeId = $('#store-filter').val();
+                const status = $('#status-filter').val() || 'online';
+                if (storeId) params.set('store_id', storeId);
+                params.set('status', status);
+                return `${sellBaseUrl}?${params.toString()}`;
+            };
 
             sellTable = $('#table-sell').DataTable({
                 processing: true,
                 serverSide: true,
-                ajax: initialUrl,
+                ajax: buildUrl(),
                 columns: [
                     {
                         data: null,
@@ -125,15 +141,14 @@
                             return formattedPrice(data)
                         }
                     },
+                    { data: 'status', name: 'status', orderable: false, searchable: false, className: 'text-center' },
                     { data: 'action', name: 'action', orderable: false, searchable: false, className: 'text-center align-self-center' }
                 ]
             });
 
-            $('#store-filter').on('change', function () {
+            $('#store-filter, #status-filter').on('change', function () {
                 if (!sellTable) return;
-                const storeId = $(this).val();
-                const nextUrl = storeId ? `${sellBaseUrl}?store_id=${storeId}` : sellBaseUrl;
-                sellTable.ajax.url(nextUrl).load();
+                sellTable.ajax.url(buildUrl()).load();
             });
         });
 

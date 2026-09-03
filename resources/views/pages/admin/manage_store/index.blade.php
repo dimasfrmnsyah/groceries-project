@@ -103,7 +103,11 @@ const toggleOnline = (storeId, desiredStatus) => {
             offline_note: note
         },
         success: function (resp) {
-            Swal.fire({ icon: 'success', title: 'Berhasil', text: resp.message || 'Status diperbarui' })
+            let message = resp.message || 'Status diperbarui';
+            if (desiredStatus && resp.released?.sales > 0) {
+                message += ` ${resp.released.sales} penjualan pending dan ${resp.released.outgoing_rows} baris stok sudah diposting.`;
+            }
+            Swal.fire({ icon: 'success', title: 'Berhasil', text: message })
                 .then(() => window.location.reload());
         },
         error: function (err) {

@@ -364,6 +364,11 @@
 document.addEventListener('DOMContentLoaded', () => {
     const role = "{{ strtolower(Auth::user()->roles ?? '') }}";
     const token = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+    const formatCurrency = (value) => new Intl.NumberFormat('id-ID', {
+        style: 'currency',
+        currency: 'IDR',
+        maximumFractionDigits: 0
+    }).format(Number(value || 0));
     const lowStockButton = document.getElementById('btn-low-stock-warning');
     const lowStockModalBody = document.getElementById('lowStockHeaderModalBody');
 
@@ -512,7 +517,16 @@ document.addEventListener('DOMContentLoaded', () => {
             const desiredOnline = !online;
             const note = desiredOnline ? '' : prompt('Catatan offline (opsional):', '');
             updateStatus(storeId, desiredOnline, note)
-                .then(() => window.location.reload())
+                .then((data) => {
+                    if (desiredOnline && data.released?.sales > 0) {
+                        return Swal.fire({
+                            icon: 'success',
+                            title: 'Toko online',
+                            text: `${data.released.sales} penjualan pending (${formatCurrency(data.released.sales_amount)}) dan ${data.released.outgoing_rows} baris stok sudah diposting.`
+                        }).then(() => window.location.reload());
+                    }
+                    return window.location.reload();
+                })
                 .catch(err => Swal.fire({icon:'error', title:'Oops', text: err.message}));
         });
     }
@@ -532,7 +546,16 @@ document.addEventListener('DOMContentLoaded', () => {
             const desired = !selfOnline;
             const note = desired ? '' : prompt('Catatan offline (opsional):', '');
             updateStatus(storeId, desired, note)
-                .then(() => window.location.reload())
+                .then((data) => {
+                    if (desired && data.released?.sales > 0) {
+                        return Swal.fire({
+                            icon: 'success',
+                            title: 'Toko online',
+                            text: `${data.released.sales} penjualan pending (${formatCurrency(data.released.sales_amount)}) dan ${data.released.outgoing_rows} baris stok sudah diposting.`
+                        }).then(() => window.location.reload());
+                    }
+                    return window.location.reload();
+                })
                 .catch(err => Swal.fire({icon:'error', title:'Oops', text: err.message}));
         });
     }
@@ -550,7 +573,16 @@ document.addEventListener('DOMContentLoaded', () => {
             const desired = !selfOnline2;
             const note = desired ? '' : prompt('Catatan offline (opsional):', '');
             updateStatus(storeId2, desired, note)
-                .then(() => window.location.reload())
+                .then((data) => {
+                    if (desired && data.released?.sales > 0) {
+                        return Swal.fire({
+                            icon: 'success',
+                            title: 'Toko online',
+                            text: `${data.released.sales} penjualan pending (${formatCurrency(data.released.sales_amount)}) dan ${data.released.outgoing_rows} baris stok sudah diposting.`
+                        }).then(() => window.location.reload());
+                    }
+                    return window.location.reload();
+                })
                 .catch(err => Swal.fire({icon:'error', title:'Oops', text: err.message}));
         });
     }

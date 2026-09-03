@@ -1004,6 +1004,7 @@
                         data: formData
                     },
                     success: function(response) {
+                        const invoiceNumber = response.invoice || formData.no_invoice;
                         // btnProcesses.removeAttr("disabled");
                         const Toast = Swal.mixin({
                             toast: true,
@@ -1028,7 +1029,7 @@
                                             <strong>TOKO MAJU JAYA</strong><br>
                                             Jl. Contoh No.123<br>
                                             Telp: 0812-3456-7890 <br>
-                                            No Invoice: ${formData.no_invoice}
+                                            No Invoice: ${invoiceNumber}
                                         </div>
                                         <hr>
                                         <div>

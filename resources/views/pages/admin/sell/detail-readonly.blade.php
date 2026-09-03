@@ -15,6 +15,15 @@
         <div class="card-body">
             <div><strong>Invoice:</strong> {{ $sell->no_invoice }}</div>
             <div><strong>Toko:</strong> {{ $sell->store?->store_name ?? '-' }}</div>
+            <div>
+                <strong>Status:</strong>
+                @if($isPending)
+                    <span class="badge bg-warning text-dark">Offline / Pending</span>
+                    <small class="text-muted">Stok dan penjualan online diposting saat toko online kembali.</small>
+                @else
+                    <span class="badge bg-success">Online</span>
+                @endif
+            </div>
             <div><strong>Tanggal:</strong> {{ $sell->date }}</div>
             <div><strong>Kasir:</strong> {{ $sell->creator?->name ?? $sell->created_by ?? '-' }}</div>
             <div><strong>Total:</strong> Rp {{ number_format((float) $sell->total_price, 0, ',', '.') }}</div>
