@@ -51,9 +51,30 @@
 <script src="{{asset('assets/plugins/datatable/js/dataTables.bootstrap5.min.js')}}"></script>
 
 <script>
+    // SweetAlert adalah enhancement saja. Delete tetap dapat digunakan jika
+    // asset SweetAlert gagal dimuat di server/cache production.
+    const showTypeDialog = (options) => {
+        if (window.Swal && typeof window.Swal.fire === 'function') {
+            return window.Swal.fire(options);
+        }
+
+        const message = [options.title, options.text]
+            .filter(Boolean)
+            .join('\n');
+
+        if (options.showCancelButton) {
+            return Promise.resolve({
+                isConfirmed: window.confirm(message),
+            });
+        }
+
+        window.alert(message);
+        return Promise.resolve({ isConfirmed: true });
+    };
+
     const confirmDelete = (id) => {
     let token = $("meta[name='csrf-token']").attr("content");
-    Swal.fire({
+    showTypeDialog({
         title: 'Apakah Anda yakin?',
         text: "Jenis akan dinonaktifkan dari daftar pilihan. Data produk dan riwayat transaksi tetap aman.",
         icon: 'warning',
@@ -72,7 +93,7 @@
                 },
                 success: function(response) {
                     if (!response.success) {
-                        Swal.fire({
+                        showTypeDialog({
                             icon: 'error',
                             title: 'Tidak dapat dihapus',
                             text: response.message || 'Terjadi kesalahan saat menghapus data!',
@@ -80,7 +101,7 @@
                         return;
                     }
 
-                    Swal.fire({
+                    showTypeDialog({
                         icon: 'success',
                         title: 'Sukses',
                         text: response.message,
@@ -89,7 +110,7 @@
                     });
                 },
                 error: function(err) {
-                    Swal.fire({
+                    showTypeDialog({
                         icon: 'error',
                         title: err.status === 409 ? 'Tidak dapat dihapus' : 'Oops...',
                         text: err.responseJSON?.message || 'Terjadi kesalahan saat menghapus data!',
@@ -119,7 +140,7 @@
     });
 
       @if(session('success'))
-          Swal.fire({
+          showTypeDialog({
               icon: 'success',
               title: 'Success!',
               text: '{{ session('success') }}',

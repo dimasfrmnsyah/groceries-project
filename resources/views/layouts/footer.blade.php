@@ -1,7 +1,7 @@
 {{-- Core JS --}}
 <script src="{{ asset('assets/js/jquery.min.js') }}"></script> {{-- jika tidak ada, hapus baris ini --}}
 <script src="{{ asset('assets/js/bootstrap.bundle.min.js') }}"></script>
-<script src="{{ asset('assets/plugins/sweetalert2/sweetalert2.min.js') }}"></script>
+<script src="{{ asset('assets/plugins/sweetalert2/sweetalert2.min.js') }}?v={{ @filemtime(public_path('assets/plugins/sweetalert2/sweetalert2.min.js')) ?: '1' }}"></script>
 
 {{-- Plugins untuk sidebar --}}
 <script src="{{ asset('assets/plugins/simplebar/js/simplebar.min.js') }}"></script>
