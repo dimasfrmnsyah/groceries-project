@@ -22,8 +22,8 @@ use App\Support\MenuHelper;
 
 class TbSalesController extends Controller
 {
-    // Semua transaksi kasir normal tetap dihitung. Movement negatif/ekstrem
-    // tidak boleh mengubah saldo operasional.
+    // Penjualan online langsung aktif di saldo. Penjualan saat toko offline
+    // disimpan sebagai pending dan baru aktif saat toko online kembali.
 
     public function index(Request $request)
     {
@@ -161,6 +161,7 @@ class TbSalesController extends Controller
                     throw new \InvalidArgumentException('Salah satu produk tidak ditemukan atau sudah tidak aktif.');
                 }
                 $availableStock = $this->currentStockByProductIds($store_id, $productIds);
+                $stockAffectsImmediately = (bool) $store->is_online;
                 $customerId = (int) ($input['customer_id'] ?? 0);
                 if ($customerId > 0 && !tb_customers::where('id', $customerId)->where('store_id', $store_id)->exists()) {
                     throw new \InvalidArgumentException('Customer tidak valid untuk toko ini.');
@@ -218,8 +219,9 @@ class TbSalesController extends Controller
                         'recorded_by' => $user->name,
                         'created_by' => $user->id,
                         'source_type' => 'sale',
-                        // Penjualan selalu mengurangi stok. Status toko tidak boleh menjadi bypass.
-                        'is_pending_stock' => 0,
+                        // Penjualan offline dicatat dahulu, lalu baru masuk saldo
+                        // ketika toko online kembali atau proses sync menyelesaikannya.
+                        'is_pending_stock' => $stockAffectsImmediately ? 0 : 1,
                     ];
                     if (Schema::hasColumn('tb_outgoing_goods', 'store_id')) {
                         $payload['store_id'] = $store_id;
@@ -252,7 +254,8 @@ class TbSalesController extends Controller
                 // saldo sistem harus berkurang tepat sebesar qty penjualan.
                 $stockAfterMovement = $this->currentStockByProductIds($store_id, $productIds);
                 foreach ($requestedQtyByProduct as $productId => $qty) {
-                    $expectedStock = (int) ($availableStock[$productId] ?? 0) - (int) $qty;
+                    $expectedStock = (int) ($availableStock[$productId] ?? 0)
+                        - ($stockAffectsImmediately ? (int) $qty : 0);
                     $actualStock = (int) ($stockAfterMovement[$productId] ?? 0);
                     if ($actualStock !== $expectedStock) {
                         throw new \RuntimeException('Saldo stok tidak berubah sesuai penjualan. Transaksi dibatalkan.');

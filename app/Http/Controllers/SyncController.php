@@ -191,7 +191,7 @@ class SyncController extends Controller
                     } else {
                         DB::table($table)->where('uuid',$uuid)->delete();
                     }
-                    $this->appendChangeNoAction($table, $uuid);
+                    $this->appendChangeNoAction($table, $uuid, 'delete');
                 } else {
                     unset($row['id']);
                     foreach (['created_at','updated_at','deleted_at'] as $ts) {
@@ -204,23 +204,10 @@ class SyncController extends Controller
                         $row = array_intersect_key($row, array_flip($tcols));
                     } catch (\Throwable $e) {}
 
-                    // Penjualan kasir selalu langsung mengurangi stok. Perangkat
-                    // offline lama mungkin mengirim flag pending=1; normalisasi
-                    // hanya untuk movement yang sudah jelas bertipe sale, tanpa
-                    // menyentuh SO, transfer, atau AR.
-                    if (
-                        $table === 'tb_outgoing_goods'
-                        && Schema::hasColumn('tb_outgoing_goods', 'source_type')
-                        && Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock')
-                        && strcasecmp(trim((string) ($row['source_type'] ?? '')), 'sale') === 0
-                    ) {
-                        $row['is_pending_stock'] = 0;
-                    }
-
                     $row['uuid'] = $uuid;
                     DB::table($table)->updateOrInsert(['uuid'=>$uuid], $row);
 
-                    $this->appendChangeNoAction($table, $uuid);
+                    $this->appendChangeNoAction($table, $uuid, 'upsert');
                 }
 
                 DB::table('sync_operations')->insert([
@@ -235,6 +222,10 @@ class SyncController extends Controller
                 $applied[] = ['operation_id'=>$operationId,'status'=>'ok'];
             }
 
+            // Setelah data offline tiba di server, aktifkan seluruh movement
+            // pending milik toko yang sudah online. Toko yang masih offline
+            // tetap pending dan tidak ikut mengurangi saldo stok.
+            $this->syncPendingStockForOnlineStores();
             DB::commit();
         } catch (\Throwable $e) {
             DB::rollBack();
@@ -244,15 +235,108 @@ class SyncController extends Controller
         return response()->json(['applied'=>$applied,'rejected'=>$rejected]);
     }
 
-    // Catat change log TANPA kolom action/op (aman utk semua skema lama)
-    protected function appendChangeNoAction(string $tableName, string $rowUuid): void
+    // Catat change log secara adaptif agar kompatibel dengan skema lama dan baru.
+    protected function appendChangeNoAction(string $tableName, string $rowUuid, string $operation = 'upsert'): void
     {
-        DB::table('sync_changes')->insert([
-            'table'      => $tableName,
-            'row_uuid'   => $rowUuid,
-            'changed_at' => now(),
-        ]);
+        $columns = Schema::getColumnListing('sync_changes');
+        $data = [
+            'table' => $tableName,
+            'row_uuid' => $rowUuid,
+        ];
+
+        if (in_array('op', $columns, true)) {
+            $data['op'] = $operation;
+        } elseif (in_array('action', $columns, true)) {
+            $data['action'] = $operation;
+        }
+        if (in_array('changed_at', $columns, true)) {
+            $data['changed_at'] = now();
+        }
+        if (in_array('device_id', $columns, true)) {
+            $data['device_id'] = request()->header('X-Device-Id');
+        }
+
+        DB::table('sync_changes')->insert($data);
     }
+
+    /**
+     * Lepas pending stock hanya untuk toko yang statusnya sudah online.
+     * Method ini dibuat idempotent agar aman dipanggil setiap selesai push.
+     */
+    protected function syncPendingStockForOnlineStores(): void
+    {
+        if (!Schema::hasTable('tb_stores')) {
+            return;
+        }
+
+        $now = now();
+        $onlineStoreIds = DB::table('tb_stores')
+            ->where('is_online', 1)
+            ->pluck('id');
+
+        foreach ($onlineStoreIds as $storeId) {
+            if (
+                Schema::hasTable('tb_incoming_goods')
+                && Schema::hasTable('tb_purchases')
+                && Schema::hasColumn('tb_incoming_goods', 'is_pending_stock')
+            ) {
+                $incomingIds = DB::table('tb_incoming_goods as ig')
+                    ->join('tb_purchases as p', 'p.id', '=', 'ig.purchase_id')
+                    ->where('p.store_id', $storeId)
+                    ->where('ig.is_pending_stock', 1)
+                    ->when(
+                        Schema::hasColumn('tb_incoming_goods', 'deleted_at'),
+                        fn ($q) => $q->whereNull('ig.deleted_at')
+                    )
+                    ->pluck('ig.id');
+
+                if ($incomingIds->isNotEmpty()) {
+                    $incomingUpdate = ['is_pending_stock' => 0];
+                    if (Schema::hasColumn('tb_incoming_goods', 'synced_at')) {
+                        $incomingUpdate['synced_at'] = $now;
+                    }
+                    if (Schema::hasColumn('tb_incoming_goods', 'updated_at')) {
+                        $incomingUpdate['updated_at'] = $now;
+                    }
+
+                    DB::table('tb_incoming_goods')
+                        ->whereIn('id', $incomingIds)
+                        ->update($incomingUpdate);
+                }
+            }
+
+            if (
+                Schema::hasTable('tb_outgoing_goods')
+                && Schema::hasTable('tb_sells')
+                && Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock')
+            ) {
+                $outgoingIds = DB::table('tb_outgoing_goods as og')
+                    ->join('tb_sells as s', 's.id', '=', 'og.sell_id')
+                    ->where('s.store_id', $storeId)
+                    ->where('og.is_pending_stock', 1)
+                    ->when(
+                        Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
+                        fn ($q) => $q->whereNull('og.deleted_at')
+                    )
+                    ->pluck('og.id');
+
+                if ($outgoingIds->isNotEmpty()) {
+                    $outgoingUpdate = ['is_pending_stock' => 0];
+                    if (Schema::hasColumn('tb_outgoing_goods', 'synced_at')) {
+                        $outgoingUpdate['synced_at'] = $now;
+                    }
+                    if (Schema::hasColumn('tb_outgoing_goods', 'updated_at')) {
+                        $outgoingUpdate['updated_at'] = $now;
+                    }
+
+                    DB::table('tb_outgoing_goods')
+                        ->whereIn('id', $outgoingIds)
+                        ->update($outgoingUpdate);
+                }
+            }
+        }
+    }
+
     public function manual(SyncService $sync)
     {
         $this->ensureSyncEnabled();
