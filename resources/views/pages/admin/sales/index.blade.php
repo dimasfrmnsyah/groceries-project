@@ -338,6 +338,37 @@
             return 'sale-' + Date.now() + '-' + Math.random().toString(36).slice(2);
         };
         let idempotencyKey = makeIdempotencyKey();
+        let transactionFingerprint = '';
+
+        // Satu kunci hanya berlaku untuk satu isi nota. Jika isi keranjang
+        // berubah, nota tersebut adalah intent baru; retry tanpa perubahan
+        // tetap memakai kunci lama agar tidak membuat transaksi ganda.
+        const refreshIdempotencyKeyForCurrentCart = () => {
+            const fingerprint = JSON.stringify({
+                store_id: $('#store-id').val() || '',
+                transaction_date: $('#transaction-date').val() || '',
+                customer_id: $('#customer-id').val() || '',
+                products: selectedRowData.map((item) => ({
+                    id: Number(item.id),
+                    qty: normalizeQty(item.qty),
+                    discount: Number(item.discount || 0),
+                })),
+            });
+
+            if (fingerprint !== transactionFingerprint) {
+                transactionFingerprint = fingerprint;
+                idempotencyKey = makeIdempotencyKey();
+            }
+        };
+
+        window.addEventListener('pageshow', (event) => {
+            // Browser back/forward cache dapat mengembalikan nota lama
+            // beserta idempotency key lama. Muat ulang agar tidak dipakai
+            // untuk transaksi baru.
+            if (event.persisted) {
+                window.location.reload();
+            }
+        });
 
 
         $(document).ready(function() {
@@ -838,6 +869,7 @@
         }
 
         const handleData = () => {
+            refreshIdempotencyKeyForCurrentCart();
             $('#product-list').empty();
 
             let productList = $('#product-list');
