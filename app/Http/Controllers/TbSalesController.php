@@ -144,7 +144,7 @@ class TbSalesController extends Controller
         }
 
         try {
-            $sell = DB::transaction(function () use ($input, $user, $store_id, $idempotencyKey, $requestedQtyByProduct) {
+            [$sell, $stockAffectsImmediately] = DB::transaction(function () use ($input, $user, $store_id, $idempotencyKey, $requestedQtyByProduct) {
                 // Semua movement toko dikunci pada baris toko yang sama. Ini membuat dua
                 // kasir tidak dapat membaca saldo yang sama lalu menjual stok yang sama.
                 $store = tb_stores::where('id', $store_id)->lockForUpdate()->firstOrFail();
@@ -263,7 +263,9 @@ class TbSalesController extends Controller
                 }
 
                 AccountingController::postSalesLedger($sell->id);
-                return $sell;
+                // Bawa status stok dari toko yang dikunci ke respons setelah commit.
+                // Variabel lokal closure tidak tersedia di luar transaksi.
+                return [$sell, $stockAffectsImmediately];
             }, 3);
 
             Cache::forget('order_stock_summary:store:'.$store_id);
