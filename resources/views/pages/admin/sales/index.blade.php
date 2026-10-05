@@ -135,9 +135,10 @@
                                     <label for="transaction_number" class="form-label">Jumlah: </label>
                                     <input type="number" class="form-control form-control-sm form-transaction" id="qty" value="1">
                                 </div>
-                                <div class="col-4">
+                                <div class="col-9 col-sm-4">
                                     <label for="transaction_number" class="form-label">Kode Item: </label>
                                     <input type="text" class="form-control form-control-sm form-transaction" name="item_code" id="item-code">
+                                    <button type="button" class="btn btn-primary btn-sm mt-2" onclick="searchItems()">Cari Barang</button>
                                 </div>
                                 {{-- <div class="col-6">
                                     <label for="select-product" class="form-label">Kode Item</label>
@@ -328,7 +329,6 @@
         let inputString = '';
         let lastKeyTime = Date.now();
         let keyModal = Number(1);
-        let onClickedItem = Number(0);
         let itemTable = null;          // instance global DataTable
         let isOpeningModal = false;    // guard agar modal tak double-open
         const makeIdempotencyKey = () => {
@@ -423,7 +423,6 @@
 
             $('#item-modal').on('hidden.bs.modal', function () {
             $('#item-code').focus();
-            onClickedItem = 0;
             isItemModalOpen = false;
 
             // PENTING: JANGAN destroy di sini
@@ -641,38 +640,33 @@
             })
 
 
+        const searchItems = () => {
+            search_term = $('#item-code').val().trim();
+            openItemModalSafely();
+        };
+
         $('#item-code').keydown(function(event) {
             const currentTime = Date.now();
             const delta = currentTime - lastKeyTime;
             lastKeyTime = currentTime;
 
-            if(event.key === "Enter") {
-                onClickedItem = onClickedItem+1;
-                search_term = $(this).val();
-                item_code = $('#item-code').val();
-                if(item_code.length > 1) {
-                    onClickedItem = onClickedItem+1
-                }
+            if (event.key === "Enter") {
                 event.preventDefault();
-                if(delta < 50) {
+                event.stopPropagation();
+                search_term = $(this).val().trim();
+
+                // Keyboard handphone tidak memiliki jeda keydown yang andal
+                // untuk membedakan input manual dari barcode scanner.
+                const isTouchInput = window.matchMedia('(pointer: coarse)').matches;
+                if (!isTouchInput && search_term && delta < 50) {
                     processBarcode(search_term);
-                    resetInput();
                 } else {
-                    if(onClickedItem <= 1) {
-                        $('#qty').focus()
-                        return;
-                    } else {
-                        openItemModalSafely()
-                        // datatableItem();
-                        // var myModal = new bootstrap.Modal(document.getElementById('item-modal'));
-                        // isItemModalOpen = true;
-                        // myModal.show();
-                    }
+                    openItemModalSafely();
                 }
                 inputString = '';
                 return;
             }
-            inputString += event.key
+            inputString += event.key;
         });
 
 
@@ -724,6 +718,7 @@
         handleKeyDownItemSearch = (event) => {
             if(event.key === "Enter") {
                 event.preventDefault();
+                event.stopPropagation();
                 search_term = $('#search_term').val();
                 // $('#table-item').DataTable().destroy();
                 // datatableItem();
