@@ -19,6 +19,9 @@ class ItemMovingController extends Controller
         $allStores = $request->get('store') === 'all';
         $storeId = $allStores ? null : store_access_resolve_id($request, $user, ['store']);
         $category = $request->get('category', 'all');
+        if (!$allStores && $category === 'unsold') {
+            $category = 'all';
+        }
         $basis = $request->get('basis', 'monthly');
         $search = trim((string) $request->get('q', ''));
 
@@ -33,6 +36,16 @@ class ItemMovingController extends Controller
                     return $row;
                 });
         })->values();
+        if ($allStores) {
+            // A product with stock in any accessible store is not dead in the combined view.
+            $stockedProducts = $rows->filter(fn ($row) => (float) $row->stock_system > 0)
+                ->pluck('id')->flip();
+            foreach ($rows as $row) {
+                if ($row->moving_category === 'dead' && $stockedProducts->has($row->id)) {
+                    $row->moving_category = 'unsold';
+                }
+            }
+        }
         if ($category !== 'all') {
             $rows = $rows->where('moving_category', $category)->values();
         }
@@ -156,23 +169,25 @@ class ItemMovingController extends Controller
 
         return $rows->map(function ($row) use ($deadBefore) {
             $lastSale = $row->last_sale_at ? Carbon::parse($row->last_sale_at, 'Asia/Jakarta') : null;
-            $min = (float) $row->min_stock;
-            $max = (float) $row->max_stock;
-            $avgSix = (float) $row->avg_six;
-            $avgThree = (float) $row->avg_three;
-
             if (!$lastSale || $lastSale->lt($deadBefore)) {
                 $row->moving_category = 'dead';
-            } elseif ($max > 0 && $avgThree > $max) {
-                $row->moving_category = 'fast';
-            } elseif ($min > 0 && $avgSix < $min) {
-                $row->moving_category = 'slow';
             } else {
-                $row->moving_category = 'normal';
+                $row->moving_category = $this->activeMovingCategory($row);
             }
 
             return $row;
         });
+    }
+
+    private function activeMovingCategory($row): string
+    {
+        if ((float) $row->max_stock > 0 && (float) $row->avg_three > (float) $row->max_stock) {
+            return 'fast';
+        }
+        if ((float) $row->min_stock > 0 && (float) $row->avg_six < (float) $row->min_stock) {
+            return 'slow';
+        }
+        return 'normal';
     }
 
     private function salesSub(int $storeId, $start, $end, string $dateExpression)

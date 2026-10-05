@@ -27,6 +27,9 @@
                     <option value="all" @selected($category === 'all')>Semua</option>
                     <option value="fast" @selected($category === 'fast')>Fast Moving</option>
                     <option value="slow" @selected($category === 'slow')>Slow Moving</option>
+                    @if($allStores)
+                        <option value="unsold" @selected($category === 'unsold')>Tidak Laku</option>
+                    @endif
                     <option value="dead" @selected($category === 'dead')>Dead Moving</option>
                     <option value="normal" @selected($category === 'normal')>Normal</option>
                 </select>
@@ -94,9 +97,9 @@
                             <td>{{ $row->last_sale_at ? \Carbon\Carbon::parse($row->last_sale_at)->format('Y-m-d') : '-' }}</td>
                             <td>
                                 @php
-                                    $badge = ['fast' => 'success', 'slow' => 'warning', 'dead' => 'danger', 'normal' => 'secondary'][$row->moving_category] ?? 'secondary';
+                                    $badge = ['fast' => 'success', 'slow' => 'warning', 'dead' => 'danger', 'unsold' => 'warning', 'normal' => 'secondary'][$row->moving_category] ?? 'secondary';
                                 @endphp
-                                <span class="badge bg-{{ $badge }}">{{ strtoupper($row->moving_category) }}</span>
+                                <span class="badge bg-{{ $badge }}">{{ $row->moving_category === 'unsold' ? 'TIDAK LAKU' : strtoupper($row->moving_category) }}</span>
                             </td>
                             <td>
                                 <form method="POST" action="{{ route('stock-transfer.store') }}" class="d-flex gap-1">
