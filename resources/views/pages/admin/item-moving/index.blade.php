@@ -15,6 +15,7 @@
                 <label class="form-label">Toko</label>
                 <select name="store" class="form-select" onchange="this.form.submit()">
                     <option value="">-- Pilih Toko --</option>
+                    <option value="all" @selected($allStores)>Semua Toko</option>
                     @foreach($stores as $store)
                         <option value="{{ $store->id }}" @selected((int)$storeId === (int)$store->id)>{{ $store->store_name }}</option>
                     @endforeach
@@ -48,7 +49,7 @@
     </div>
 </div>
 
-@if(!$storeId)
+@if(!$storeId && !$allStores)
     <div class="alert alert-info">Pilih toko untuk melihat kategori item.</div>
 @else
 <div class="card">
@@ -57,6 +58,7 @@
             <table class="table table-striped table-bordered align-middle">
                 <thead>
                     <tr>
+                        <th>Toko</th>
                         <th>Kode</th>
                         <th>Produk</th>
                         <th>Stok</th>
@@ -72,6 +74,7 @@
                 <tbody>
                     @forelse($rows as $row)
                         <tr>
+                            <td>{{ $row->store_name }}</td>
                             <td>{{ $row->product_code }}</td>
                             <td>{{ $row->product_name }}</td>
                             <td class="text-end">{{ number_format($row->stock_system, 0, ',', '.') }}</td>
@@ -90,12 +93,12 @@
                                 <form method="POST" action="{{ route('stock-transfer.store') }}" class="d-flex gap-1">
                                     @csrf
                                     <input type="hidden" name="date" value="{{ now('Asia/Jakarta')->toDateString() }}">
-                                    <input type="hidden" name="from_store_id" value="{{ $storeId }}">
+                                    <input type="hidden" name="from_store_id" value="{{ $row->store_id }}">
                                     <input type="hidden" name="product_id" value="{{ $row->id }}">
                                     <input type="number" name="quantity" class="form-control form-control-sm" min="1" max="{{ max(1, (int)$row->stock_system) }}" value="1" style="width:80px">
                                     <select name="to_store_id" class="form-select form-select-sm" style="width:150px" required>
                                         <option value="">Tujuan</option>
-                                        @foreach($toStores as $store)
+                                        @foreach($toStores->where('id', '!=', $row->store_id) as $store)
                                             <option value="{{ $store->id }}">{{ $store->store_name }}</option>
                                         @endforeach
                                     </select>
@@ -104,7 +107,7 @@
                             </td>
                         </tr>
                     @empty
-                        <tr><td colspan="10" class="text-center">Tidak ada data.</td></tr>
+                        <tr><td colspan="11" class="text-center">Tidak ada data.</td></tr>
                     @endforelse
                 </tbody>
             </table>

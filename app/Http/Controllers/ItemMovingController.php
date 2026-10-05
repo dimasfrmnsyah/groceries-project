@@ -13,17 +13,23 @@ class ItemMovingController extends Controller
     public function index(Request $request)
     {
         $user = $request->user();
-        $storeId = store_access_resolve_id($request, $user, ['store']);
+        $allStores = $request->get('store') === 'all';
+        $storeId = $allStores ? null : store_access_resolve_id($request, $user, ['store']);
         $category = $request->get('category', 'all');
         $basis = $request->get('basis', 'monthly');
         $search = trim((string) $request->get('q', ''));
 
-        $stores = store_access_can_select($user) ? store_access_list($user) : collect();
-        $toStores = $storeId
-            ? store_access_list($user)->where('id', '!=', $storeId)->values()
-            : collect();
-
-        $rows = $storeId ? $this->movingRows($storeId, $basis, $search) : collect();
+        $stores = store_access_list($user);
+        $toStores = $stores;
+        $selectedStores = $allStores ? $stores : $stores->where('id', $storeId);
+        $rows = $selectedStores->flatMap(function ($store) use ($basis, $search) {
+            return $this->movingRows((int) $store->id, $basis, $search)
+                ->map(function ($row) use ($store) {
+                    $row->store_id = (int) $store->id;
+                    $row->store_name = $store->store_name;
+                    return $row;
+                });
+        })->values();
         if ($category !== 'all') {
             $rows = $rows->where('moving_category', $category)->values();
         }
@@ -32,6 +38,7 @@ class ItemMovingController extends Controller
             'stores',
             'toStores',
             'storeId',
+            'allStores',
             'category',
             'basis',
             'search',
