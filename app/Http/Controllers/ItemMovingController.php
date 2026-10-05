@@ -19,7 +19,7 @@ class ItemMovingController extends Controller
         $allStores = $request->get('store') === 'all';
         $storeId = $allStores ? null : store_access_resolve_id($request, $user, ['store']);
         $category = $request->get('category', 'all');
-        if (!$allStores && $category === 'unsold') {
+        if ($category === 'unsold') {
             $category = 'all';
         }
         $basis = $request->get('basis', 'monthly');
@@ -36,16 +36,6 @@ class ItemMovingController extends Controller
                     return $row;
                 });
         })->values();
-        if ($allStores) {
-            // A product with stock in any accessible store is not dead in the combined view.
-            $stockedProducts = $rows->filter(fn ($row) => (float) $row->stock_system > 0)
-                ->pluck('id')->flip();
-            foreach ($rows as $row) {
-                if ($row->moving_category === 'dead' && $stockedProducts->has($row->id)) {
-                    $row->moving_category = 'unsold';
-                }
-            }
-        }
         if ($category !== 'all') {
             $rows = $rows->where('moving_category', $category)->values();
         }

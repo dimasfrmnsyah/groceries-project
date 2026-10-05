@@ -62,7 +62,7 @@ class ItemMovingStoreFilterTest extends TestCase
     public function test_single_store_and_search_and_category_filters_still_work(): void
     {
         $this->assertEquals(25, $this->rows('superadmin', ['store' => 2])->first()->stock_system);
-        $this->assertCount(2, $this->rows('superadmin', ['store' => 'all', 'q' => 'Beras', 'category' => 'unsold']));
+        $this->assertCount(2, $this->rows('superadmin', ['store' => 'all', 'q' => 'Beras', 'category' => 'dead']));
         $this->assertCount(0, $this->rows('superadmin', ['store' => 'all', 'q' => 'missing']));
         $this->assertCount(0, $this->rows('superadmin', ['store' => 'all', 'category' => 'fast']));
     }
@@ -88,49 +88,59 @@ class ItemMovingStoreFilterTest extends TestCase
         $this->assertSame($date, $row->last_sale_at);
     }
 
-    public function test_all_stores_excludes_product_from_dead_when_any_accessible_store_has_stock(): void
+    public function test_all_stores_preserves_original_dead_category_even_with_stock(): void
     {
-        DB::table('tb_incoming_goods')->where('purchase_id', 1)->update(['stock' => 0]);
-        $this->assertCount(0, $this->rows('superadmin', ['store' => 'all', 'category' => 'dead']));
-        $this->assertCount(2, $this->rows('superadmin', ['store' => 'all', 'category' => 'unsold']));
-        $this->assertCount(1, $this->rows('superadmin', ['store' => 1, 'category' => 'dead']));
-        // Stock in an inaccessible store must not affect this user's report.
-        $this->assertCount(1, $this->rows('staff', ['store' => 'all', 'category' => 'dead']));
-    }
-
-    public function test_all_stores_keeps_dead_when_no_store_has_positive_stock(): void
-    {
-        DB::table('tb_incoming_goods')->update(['stock' => 0]);
         $this->assertCount(2, $this->rows('superadmin', ['store' => 'all', 'category' => 'dead']));
     }
 
-    public function test_stocked_dead_product_is_unsold_in_all_stores_but_remains_dead_per_store(): void
+    public function test_unsold_menu_requires_zero_balance_in_each_store(): void
     {
-        DB::table('tb_product_store_thresholds')->insert(['product_id' => 1, 'store_id' => 1, 'min_stock' => 35, 'max_stock' => 45]);
-        $rows = $this->rows('superadmin', ['store' => 'all'])->keyBy('store_id');
-        $this->assertSame('unsold', $rows[1]->moving_category);
-        $this->assertSame('unsold', $rows[2]->moving_category);
-        $this->assertSame('dead', $this->rows('superadmin', ['store' => 1])->first()->moving_category);
+        DB::table('tb_products')->insert([
+            ['id' => 2, 'product_code' => 'ZERO', 'product_name' => 'Zero', 'is_active' => 1],
+            ['id' => 3, 'product_code' => 'OFFSET', 'product_name' => 'Offset', 'is_active' => 1],
+        ]);
+        DB::table('tb_incoming_goods')->insert(['product_id' => 3, 'purchase_id' => 1, 'stock' => 5]);
+        DB::table('tb_sells')->insert(['id' => 1, 'store_id' => 2]);
+        DB::table('tb_outgoing_goods')->insert(['product_id' => 3, 'sell_id' => 1, 'quantity_out' => 5]);
+        $user = new User();
+        $user->forceFill(['id' => 1, 'roles' => 'superadmin']);
+        $request = Request::create('/unsold-products');
+        $request->setUserResolver(fn () => $user);
+        $data = app(\App\Http\Controllers\UnsoldProductController::class)->index($request)->getData();
+        $this->assertSame([2], $data['products']->pluck('id')->all());
+        $this->assertSame(1, $data['products']->total());
+    }
+    public function test_unsold_menu_search_pagination_and_pending_movements(): void
+    {
+        DB::statement('ALTER TABLE tb_incoming_goods ADD COLUMN is_pending_stock INTEGER');
+        DB::table('tb_incoming_goods')->update(['is_pending_stock' => 1]);
+        for ($id = 2; $id <= 55; $id++) {
+            DB::table('tb_products')->insert(['id' => $id, 'product_code' => 'ZERO-'.$id, 'product_name' => 'Zero '.$id, 'is_active' => 1]);
+        }
+        $user = new User();
+        $user->forceFill(['id' => 1, 'roles' => 'superadmin']);
+        $request = Request::create('/unsold-products');
+        $request->setUserResolver(fn () => $user);
+        $controller = app(\App\Http\Controllers\UnsoldProductController::class);
+        $products = $controller->index($request)->getData()['products'];
+        $this->assertSame(55, $products->total());
+        $this->assertCount(50, $products);
+        $request->query->set('q', 'ZERO-55');
+        $this->assertSame([55], $controller->index($request)->getData()['products']->pluck('id')->all());
     }
 
-    public function test_unsold_filter_resets_when_switching_to_single_store(): void
+    public function test_unsold_menu_denies_role_without_permission(): void
     {
-        $rows = $this->rows('superadmin', ['store' => 1, 'category' => 'unsold']);
-        $this->assertCount(1, $rows);
-        $this->assertSame('dead', $rows->first()->moving_category);
-    }
-
-    public function test_recently_sold_product_is_not_classified_as_unsold(): void
-    {
-        $date = now('Asia/Jakarta')->subDay()->toDateString();
-        DB::table('tb_sells')->insert(['id' => 1, 'store_id' => 1, 'no_invoice' => 'INV-003', 'date' => $date]);
-        DB::table('tb_outgoing_goods')->insert(['product_id' => 1, 'sell_id' => 1, 'quantity_out' => 1, 'date' => $date]);
-        $rows = $this->rows('superadmin', ['store' => 'all', 'category' => 'unsold']);
-        $this->assertCount(1, $rows);
-        $this->assertSame(2, $rows->first()->store_id);
-        $normal = $this->rows('superadmin', ['store' => 'all', 'category' => 'normal']);
-        $this->assertCount(1, $normal);
-        $this->assertSame(1, $normal->first()->store_id);
+        $user = new User();
+        $user->forceFill(['id' => 1, 'roles' => 'no-unsold-access']);
+        $request = Request::create('/unsold-products');
+        $request->setUserResolver(fn () => $user);
+        try {
+            app(\App\Http\Controllers\UnsoldProductController::class)->index($request);
+            $this->fail('Expected access denial.');
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            $this->assertSame(403, $e->getStatusCode());
+        }
     }
 
 }
