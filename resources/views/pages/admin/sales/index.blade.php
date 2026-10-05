@@ -329,6 +329,7 @@
         let inputString = '';
         let lastKeyTime = Date.now();
         let keyModal = Number(1);
+        let onClickedItem = 0;
         let itemTable = null;          // instance global DataTable
         let isOpeningModal = false;    // guard agar modal tak double-open
         const makeIdempotencyKey = () => {
@@ -422,6 +423,7 @@
             });
 
             $('#item-modal').on('hidden.bs.modal', function () {
+            onClickedItem = 0;
             $('#item-code').focus();
             isItemModalOpen = false;
 
@@ -660,8 +662,16 @@
                 const isTouchInput = window.matchMedia('(pointer: coarse)').matches;
                 if (!isTouchInput && search_term && delta < 50) {
                     processBarcode(search_term);
-                } else {
+                } else if (isTouchInput) {
                     openItemModalSafely();
+                } else {
+                    // Alur PC: Enter pertama kembali ke jumlah; Enter berikutnya membuka barang.
+                    onClickedItem += search_term.length > 1 ? 2 : 1;
+                    if (onClickedItem <= 1) {
+                        $('#qty').focus();
+                    } else {
+                        openItemModalSafely();
+                    }
                 }
                 inputString = '';
                 return;
