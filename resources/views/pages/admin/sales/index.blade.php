@@ -652,15 +652,17 @@
             const delta = currentTime - lastKeyTime;
             lastKeyTime = currentTime;
 
-            if (event.key === "Enter") {
+            const isTouchInput = window.matchMedia('(pointer: coarse)').matches;
+            const code = $(this).val().trim();
+            const isBarcode = !isTouchInput && code && (/^\d+$/.test(code) || delta < 50);
+            if (event.key === "Enter" || (event.key === "Tab" && isBarcode)) {
                 event.preventDefault();
                 event.stopPropagation();
                 search_term = $(this).val().trim();
 
                 // Keyboard handphone tidak memiliki jeda keydown yang andal
                 // untuk membedakan input manual dari barcode scanner.
-                const isTouchInput = window.matchMedia('(pointer: coarse)').matches;
-                if (!isTouchInput && search_term && delta < 50) {
+                if (isBarcode) {
                     processBarcode(search_term);
                 } else if (isTouchInput) {
                     openItemModalSafely();
@@ -680,22 +682,26 @@
         });
 
 
-        const processBarcode = debounce((barcode) => {
-            let qty = normalizeQty($('#qty').val());
+        const processBarcode = (barcode) => {
+            const qty = normalizeQty($('#qty').val());
+            const storeId = $('#store-id').val();
+            resetInput();
             $.ajax({
                 url:`{{ route('options.incoming_goods') }}`,
                 method:'GET',
-                data: {'search_term': barcode, 'type': 'barcode', 'store_id': $('#store-id').val()},
+                data: {'search_term': barcode, 'type': 'barcode', 'store_id': storeId},
                 success: function(response) {
                     let data = response.data && response.data.length ? response.data[0] : null;
-                    if (addItemToCart(data, qty)) {
-                        resetInput()
+                    if (!data) {
+                        alert(`Barcode ${barcode} tidak ditemukan atau stok tidak tersedia di toko ini. Silakan periksa lalu scan ulang.`);
+                        return;
                     }
+                    addItemToCart(data, qty);
                 }, error: function(err) {
-                    console.log(err)
+                    alert(`Scan ${barcode} gagal: ${err.responseJSON?.message || 'koneksi bermasalah'}. Silakan scan ulang.`);
                 }
             })
-        }, 500)
+        };
 
         
 

@@ -43,3 +43,28 @@ test('desktop scanner still processes barcode', () => {
     const h = setup(false, '12345', 20); h.run(itemHandler);
     assert.equal(h.state.scanned, 1); assert.equal(h.state.opened, 0);
 });
+test('numeric barcode with delayed Enter is still scanned on desktop', () => {
+    const h = setup(false, '8999909001909', 250); h.run(itemHandler);
+    assert.equal(h.state.scanned, 1); assert.equal(h.state.opened, 0);
+});
+test('scanner with Tab terminator is processed', () => {
+    const h = setup(false, '8999909001909', 100); h.context.event.key = 'Tab'; h.run(itemHandler);
+    assert.equal(h.state.scanned, 1);
+});
+test('each scan issues a lookup and an old response does not clear newer input', () => {
+    const body = source.match(/const processBarcode = ([\s\S]*?)\n        \/\/ Modal payment open/)[1];
+    const requests = [];
+    let code = 'first'; let qty = 3; const added = [];
+    const context = vm.createContext({
+        $: Object.assign(selector => ({val: () => selector === '#qty' ? qty : code}), {ajax: options => requests.push(options)}),
+        normalizeQty: Number, resetInput: () => {code = ''; qty = 1;},
+        addItemToCart: (data, quantity) => {added.push(quantity); return true;},
+        alert() {}, console, debounce: callback => { let pending; return (...args) => {pending = () => callback(...args);}; },
+    });
+    vm.runInContext('const processBarcode = ' + body + '; processBarcode("first"); processBarcode("second");', context);
+    assert.equal(requests.length, 2);
+    code = 'third-in-progress';
+    requests[0].success({data: [{id: 1}]});
+    assert.equal(code, 'third-in-progress');
+    assert.equal(added[0], 3);
+});
