@@ -192,6 +192,8 @@ Route::get('/sync/manual', [SyncController::class, 'manual'])->name('sync.manual
         Route::post('/', [StockThresholdController::class, 'save'])->name('stock-threshold.save');
     });
 
+    Route::delete('/unsold-products', [\App\Http\Controllers\UnsoldProductController::class, 'destroySelected'])->name('unsold-products.destroy-selected');
+    Route::delete('/unsold-products/{id}', [\App\Http\Controllers\UnsoldProductController::class, 'destroy'])->whereNumber('id')->name('unsold-products.destroy');
     Route::get('/unsold-products', [\App\Http\Controllers\UnsoldProductController::class, 'index'])->name('unsold-products.index');
 
     Route::prefix('item-moving')->group(function () {

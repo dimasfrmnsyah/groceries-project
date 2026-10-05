@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Support\MenuHelper;
+use App\Models\tb_products;
 use App\Support\StockLedger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -14,6 +15,7 @@ class UnsoldProductController extends Controller
     {
         $role = strtolower(trim((string) ($request->user()?->roles ?? '')));
         abort_unless($role === 'superadmin' || MenuHelper::roleHasRoute('unsold-products.index', $role), 403);
+        $canDeleteProducts = $this->canDeleteProducts($request);
         $search = trim((string) $request->query('q', ''));
 
         // Use the same incoming-store membership as the existing stock report.
@@ -56,6 +58,50 @@ class UnsoldProductController extends Controller
             ->select('p.id', 'p.product_code', 'p.product_name')
             ->orderBy('p.product_name')->orderBy('p.id')->paginate(50)->withQueryString();
 
-        return view('pages.admin.unsold-products.index', compact('products', 'search'));
+        return view('pages.admin.unsold-products.index', compact('products', 'search', 'canDeleteProducts'));
+    }
+    private function canDeleteProducts(Request $request): bool
+    {
+        $role = strtolower(trim((string) ($request->user()?->roles ?? '')));
+        return $role === 'superadmin' || (
+            MenuHelper::roleHasRoute('unsold-products.index', $role)
+            && MenuHelper::roleHasRoute('master-product.index', $role)
+        );
+    }
+
+    public function destroy(Request $request, int $id)
+    {
+        abort_unless($this->canDeleteProducts($request), 403);
+        tb_products::findOrFail($id);
+        return $this->deleteIds([$id]);
+    }
+
+    public function destroySelected(Request $request)
+    {
+        abort_unless($this->canDeleteProducts($request), 403);
+        $validated = $request->validate([
+            'product_ids' => 'required|array|min:1|max:1000',
+            'product_ids.*' => 'required|integer|exists:tb_products,id',
+        ]);
+        return $this->deleteIds(array_values(array_unique($validated['product_ids'])));
+    }
+
+    private function deleteIds(array $ids)
+    {
+        try {
+            $deleted = DB::transaction(function () use ($ids) {
+                $products = tb_products::whereIn('id', $ids)->orderBy('id')->lockForUpdate()->get();
+                DB::table('tb_product_store_prices')->whereIn('product_id', $ids)->delete();
+                DB::table('tb_product_store_thresholds')->whereIn('product_id', $ids)->delete();
+                foreach ($products as $product) {
+                    $product->delete();
+                }
+                return $products->count();
+            });
+        } catch (\Throwable $e) {
+            report($e);
+            return response()->json(['message' => 'Produk gagal dihapus. Tidak ada perubahan yang disimpan.'], 409);
+        }
+        return response()->json(['message' => 'Master produk berhasil dihapus.', 'deleted' => $deleted]);
     }
 }
