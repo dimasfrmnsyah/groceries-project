@@ -15,6 +15,7 @@ use Illuminate\Support\Str;
 use Yajra\DataTables\Facades\DataTables;
 use Illuminate\Validation\Rule;
 use App\Support\StockLedger;
+use App\Support\MenuHelper;
 
 class TbPurchaseController extends Controller
 {
@@ -70,7 +71,7 @@ class TbPurchaseController extends Controller
      */
     public function create()
     {
-        $this->authorizePurchaseManager();
+        $this->authorizePurchaseCreation();
         $suppliers = tb_suppliers::query()
             ->where('code', '!=', 'SO-ADJ')
             ->orderBy('name')
@@ -85,7 +86,7 @@ class TbPurchaseController extends Controller
     
     public function store(Request $request)
 {
-    $this->authorizePurchaseManager();
+    $this->authorizePurchaseCreation();
     $user = auth()->user();
     $storeId = store_access_resolve_id($request, $user, ['store_id']);
     if (!$storeId) {
@@ -387,6 +388,16 @@ class TbPurchaseController extends Controller
             DB::rollBack();
             return redirect()->route('purchase.index')->with('error', $e->getMessage());
         }
+    }
+
+    private function authorizePurchaseCreation(): void
+    {
+        $role = strtolower(trim((string) (auth()->user()?->roles ?? '')));
+        abort_unless(
+            $role === 'superadmin' || MenuHelper::roleHasRoute('purchase.index', $role),
+            403,
+            'Anda tidak memiliki akses untuk menambah pembelian.'
+        );
     }
 
     private function authorizePurchaseManager(): void
