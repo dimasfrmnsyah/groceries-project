@@ -17,6 +17,8 @@ class ItemMovingStoreFilterTest extends TestCase
             'driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '',
         ]]);
         foreach ([
+            'CREATE TABLE tb_master_menuses (id INTEGER PRIMARY KEY, menu_path TEXT, is_active INTEGER)',
+            'CREATE TABLE tb_master_menu_roles (menu_id INTEGER, role_name TEXT)',
             'CREATE TABLE tb_stores (id INTEGER PRIMARY KEY, store_name TEXT, deleted_at TEXT)',
             'CREATE TABLE tb_products (id INTEGER PRIMARY KEY, product_code TEXT, product_name TEXT, is_active INTEGER)',
             'CREATE TABLE tb_product_store_thresholds (product_id INTEGER, store_id INTEGER, min_stock NUMERIC, max_stock NUMERIC)',

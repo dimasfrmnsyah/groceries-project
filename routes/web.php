@@ -194,6 +194,7 @@ Route::get('/sync/manual', [SyncController::class, 'manual'])->name('sync.manual
 
     Route::prefix('item-moving')->group(function () {
         Route::get('/', [ItemMovingController::class, 'index'])->name('item-moving.index');
+        Route::delete('/products', [ItemMovingController::class, 'deleteProducts'])->name('item-moving.delete-products');
     });
 
     Route::prefix('stock-transfer')->group(function () {

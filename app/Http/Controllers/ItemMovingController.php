@@ -7,12 +7,15 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use App\Support\StockLedger;
+use App\Support\MenuHelper;
+use App\Models\tb_products;
 
 class ItemMovingController extends Controller
 {
     public function index(Request $request)
     {
         $user = $request->user();
+        $canDeleteProducts = $this->canDeleteProducts($user);
         $allStores = $request->get('store') === 'all';
         $storeId = $allStores ? null : store_access_resolve_id($request, $user, ['store']);
         $category = $request->get('category', 'all');
@@ -35,6 +38,7 @@ class ItemMovingController extends Controller
         }
 
         return view('pages.admin.item-moving.index', compact(
+            'canDeleteProducts',
             'stores',
             'toStores',
             'storeId',
@@ -44,6 +48,42 @@ class ItemMovingController extends Controller
             'search',
             'rows'
         ));
+    }
+
+    private function canDeleteProducts($user): bool
+    {
+        $role = strtolower(trim((string) ($user?->roles ?? '')));
+        return $role === 'superadmin' || (
+            MenuHelper::roleHasRoute('item-moving.index', $role)
+            && MenuHelper::roleHasRoute('master-product.index', $role)
+        );
+    }
+
+    public function deleteProducts(Request $request)
+    {
+        abort_unless($this->canDeleteProducts($request->user()), 403, 'Anda tidak memiliki akses untuk menghapus master produk.');
+        $validated = $request->validate([
+            'product_ids' => 'required|array|min:1|max:1000',
+            'product_ids.*' => 'required|integer|exists:tb_products,id',
+        ]);
+        $ids = array_values(array_unique($validated['product_ids']));
+
+        try {
+            $deleted = DB::transaction(function () use ($ids) {
+                $products = tb_products::whereIn('id', $ids)->lockForUpdate()->get();
+                DB::table('tb_product_store_prices')->whereIn('product_id', $ids)->delete();
+                DB::table('tb_product_store_thresholds')->whereIn('product_id', $ids)->delete();
+                foreach ($products as $product) {
+                    $product->delete();
+                }
+                return $products->count();
+            });
+        } catch (\Throwable $e) {
+            report($e);
+            return response()->json(['message' => 'Produk gagal dihapus. Tidak ada perubahan yang disimpan.'], 409);
+        }
+
+        return response()->json(['message' => $deleted.' master produk berhasil dihapus.', 'deleted' => $deleted]);
     }
 
     private function movingRows(int $storeId, string $basis, string $search)

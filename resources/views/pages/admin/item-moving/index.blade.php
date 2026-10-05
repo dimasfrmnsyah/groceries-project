@@ -54,10 +54,15 @@
 @else
 <div class="card">
     <div class="card-body">
+        @if($canDeleteProducts)
+            <button type="button" id="delete-selected" class="btn btn-danger mb-3" disabled>Hapus Terpilih (0)</button>
+            <div id="delete-feedback" role="status" class="mb-2"></div>
+        @endif
         <div class="table-responsive">
             <table class="table table-striped table-bordered align-middle">
                 <thead>
                     <tr>
+                        @if($canDeleteProducts)<th><input type="checkbox" id="select-all-products" aria-label="Pilih semua produk"></th>@endif
                         <th>Toko</th>
                         <th>Kode</th>
                         <th>Produk</th>
@@ -69,11 +74,15 @@
                         <th>Terakhir Jual</th>
                         <th>Kategori</th>
                         <th>Transfer</th>
+                        @if($canDeleteProducts)<th>Hapus</th>@endif
                     </tr>
                 </thead>
                 <tbody>
                     @forelse($rows as $row)
                         <tr>
+                            @if($canDeleteProducts)
+                                <td><input type="checkbox" class="product-checkbox" value="{{ $row->id }}" aria-label="Pilih {{ $row->product_name }}"></td>
+                            @endif
                             <td>{{ $row->store_name }}</td>
                             <td>{{ $row->product_code }}</td>
                             <td>{{ $row->product_name }}</td>
@@ -105,14 +114,69 @@
                                     <button class="btn btn-sm btn-primary">Pindah</button>
                                 </form>
                             </td>
+                            @if($canDeleteProducts)
+                                <td><button type="button" class="btn btn-sm btn-danger delete-product" data-product-id="{{ $row->id }}">Hapus</button></td>
+                            @endif
                         </tr>
                     @empty
-                        <tr><td colspan="11" class="text-center">Tidak ada data.</td></tr>
+                        <tr><td colspan="{{ $canDeleteProducts ? 13 : 11 }}" class="text-center">Tidak ada data.</td></tr>
                     @endforelse
                 </tbody>
             </table>
         </div>
     </div>
 </div>
+@endif
+@endsection
+
+@section('scripts')
+@if($canDeleteProducts)
+<script>
+    const boxes = [...document.querySelectorAll('.product-checkbox')];
+    const selectAll = document.getElementById('select-all-products');
+    const deleteSelected = document.getElementById('delete-selected');
+    const feedback = document.getElementById('delete-feedback');
+    let deleting = false;
+    const selectedIds = () => [...new Set(boxes.filter(box => box.checked).map(box => box.value))];
+    function updateSelection() {
+        const count = selectedIds().length;
+        deleteSelected.textContent = `Hapus Terpilih (${count})`;
+        deleteSelected.disabled = deleting || count === 0;
+        selectAll.checked = boxes.length > 0 && boxes.every(box => box.checked);
+        selectAll.indeterminate = count > 0 && !selectAll.checked;
+    }
+    boxes.forEach(box => box.addEventListener('change', () => {
+        boxes.filter(other => other.value === box.value).forEach(other => other.checked = box.checked);
+        updateSelection();
+    }));
+    if (selectAll) selectAll.addEventListener('change', () => {
+        boxes.forEach(box => box.checked = selectAll.checked);
+        updateSelection();
+    });
+    async function deleteProducts(ids) {
+        if (deleting || !ids.length) return;
+        if (!confirm(`Hapus ${ids.length} master produk dari seluruh toko? Tindakan ini tidak dapat dibatalkan.`)) return;
+        deleting = true;
+        document.querySelectorAll('.delete-product, .product-checkbox, #select-all-products, #delete-selected').forEach(el => el.disabled = true);
+        feedback.textContent = 'Menghapus...';
+        try {
+            const response = await fetch(@json(route('item-moving.delete-products')), {
+                method: 'DELETE',
+                headers: {'Content-Type': 'application/json', 'Accept': 'application/json', 'X-CSRF-TOKEN': @json(csrf_token())},
+                body: JSON.stringify({product_ids: ids})
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(response.status === 419 ? 'Sesi telah kedaluwarsa. Muat ulang halaman sebelum mencoba lagi.' : (result.message || 'Produk gagal dihapus.'));
+            window.location.reload();
+        } catch (error) {
+            feedback.textContent = error.message;
+            deleting = false;
+            document.querySelectorAll('.delete-product, .product-checkbox, #select-all-products').forEach(el => el.disabled = false);
+            updateSelection();
+        }
+    }
+    if (deleteSelected) deleteSelected.addEventListener('click', () => deleteProducts(selectedIds()));
+    document.querySelectorAll('.delete-product').forEach(button => button.addEventListener('click', () => deleteProducts([button.dataset.productId])));
+</script>
 @endif
 @endsection
