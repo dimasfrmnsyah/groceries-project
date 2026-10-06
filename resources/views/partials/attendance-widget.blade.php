@@ -6,4 +6,3 @@
     <button type="button" id="attendance-detail" class="btn btn-sm btn-link p-0 text-nowrap d-none" aria-label="Lihat detail absensi">Detail</button>
     <small id="attendance-hint" class="text-muted d-none d-xl-inline" aria-live="polite"></small>
 </div>
-<script src="{{ asset('assets/js/attendance.js') }}?v={{ filemtime(public_path('assets/js/attendance.js')) }}" defer onerror="var button = document.getElementById('attendance-action'); button.textContent = 'Muat ulang absensi'; button.disabled = false; button.onclick = function () { window.location.reload(); };"></script>

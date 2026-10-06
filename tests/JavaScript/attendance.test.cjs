@@ -28,8 +28,10 @@ function setup(options = {}) {
         querySelector: () => ({content: 'csrf'}),
     };
     const bootstrap = {Modal: {getOrCreateInstance: () => ({show() { elements.modal.classList.add('show'); }})}};
+    let reloads = 0;
+    const browser = {bootstrap: options.missingBootstrap ? null : bootstrap, addEventListener() {}, location: {reload() {reloads++;}}};
     vm.runInNewContext(source, {
-        document, window: {bootstrap: options.missingBootstrap ? null : bootstrap, addEventListener() {}, location: {reload() {}}}, bootstrap, crypto: webcrypto,
+        document, window: browser, bootstrap, crypto: webcrypto,
         AbortController, setTimeout, clearTimeout, Uint8Array,
         fetch(url, options) { return new Promise((resolve, reject) => calls.push({url, options, resolve, reject})); },
     });
@@ -37,7 +39,7 @@ function setup(options = {}) {
         calls[index].resolve({ok: status === 200, status, json: async () => ({attendance, message: 'Gagal'})});
         await settle();
     };
-    return {elements, calls, respond};
+    return {elements, calls, respond, browser, bootstrap, reloads: () => reloads};
 }
 const openShift = {id: 7, checked_in_at: '06/10/2026 08:00:00 WIB', checked_out_at: null};
 const closedShift = {...openShift, checked_out_at: '06/10/2026 17:30:00 WIB'};
@@ -106,4 +108,15 @@ test('missing modal offers reload instead of silently stopping', () => {
     const h = setup({missingModal: true});
     assert.equal(h.elements.action.textContent, 'Muat ulang absensi');
     assert.equal(h.elements.action.disabled, false);
+});
+
+test('retry initializes recovered dependency without refreshing the page', async () => {
+    const h = setup({missingBootstrap: true});
+    h.browser.bootstrap = h.bootstrap;
+    const retry = h.elements.action.onclick || h.elements.action.handlers.click;
+    retry();
+    assert.equal(h.reloads(), 0);
+    assert.equal(h.calls.length, 1);
+    await h.respond(0, null);
+    assert.equal(h.elements.action.textContent, 'Absen Masuk');
 });

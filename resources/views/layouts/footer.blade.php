@@ -1,6 +1,10 @@
 {{-- Core JS --}}
 <script src="{{ asset('assets/js/jquery.min.js') }}"></script> {{-- jika tidak ada, hapus baris ini --}}
 <script src="{{ asset('assets/js/bootstrap.bundle.min.js') }}"></script>
+@if(Auth::check() && in_array(strtolower(trim(Auth::user()->roles ?? '')), \App\Models\Attendance::CASHIER_ROLES, true))
+    {{-- Delivered with the page after Bootstrap; no separate attendance asset request/cache. --}}
+    <script>{!! file_get_contents(public_path('assets/js/attendance.js')) !!}</script>
+@endif
 <script src="{{ asset('assets/plugins/sweetalert2/sweetalert2.min.js') }}?v={{ @filemtime(public_path('assets/plugins/sweetalert2/sweetalert2.min.js')) ?: '1' }}"></script>
 
 {{-- Plugins untuk sidebar --}}

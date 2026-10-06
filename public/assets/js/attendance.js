@@ -4,16 +4,18 @@
     function init() {
         const widget = document.getElementById('attendance-widget');
         const modalElement = document.getElementById('attendance-modal');
-        if (!widget) return;
+        if (!widget || widget.dataset.initialized === '1') return;
         if (!modalElement || !window.bootstrap || !window.bootstrap.Modal) {
             const retry = document.getElementById('attendance-action');
             retry.textContent = 'Muat ulang absensi';
             retry.disabled = false;
-            retry.addEventListener('click', function () { window.location.reload(); });
-            document.getElementById('attendance-hint').textContent = 'Komponen absensi belum termuat. Muat ulang halaman.';
+            retry.onclick = init;
+            document.getElementById('attendance-hint').textContent = !modalElement ? 'Form absensi tidak tersedia pada halaman ini. Hubungi admin.' : 'Bootstrap belum termuat. Klik untuk mencoba lagi.';
             return;
         }
         const action = document.getElementById('attendance-action');
+        action.onclick = null;
+        widget.dataset.initialized = '1';
         const detail = document.getElementById('attendance-detail');
         const hint = document.getElementById('attendance-hint');
         const title = document.getElementById('attendance-modal-title');
