@@ -74,11 +74,11 @@ class AttendanceTest extends TestCase
         $id = $this->checkIn($key)->assertOk()->json('attendance.id');
         $this->checkIn($key)->assertOk()->assertJsonPath('attendance.id', $id);
         $this->checkIn()->assertStatus(409);
-        $this->postJson('/attendance/check-out', ['attendance_id' => $id])->assertOk();
+        $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 0])->assertOk();
         $this->checkIn($key)->assertOk()->assertJsonPath('attendance.id', $id);
         $this->assertSame(1, Attendance::count());
         $newId = $this->checkIn()->assertOk()->json('attendance.id');
-        $this->postJson('/attendance/check-out', ['attendance_id' => $id])->assertOk();
+        $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 0])->assertOk();
         $this->assertNull(Attendance::findOrFail($newId)->checked_out_at);
     }
 
@@ -86,13 +86,13 @@ class AttendanceTest extends TestCase
     {
         $id = $this->checkIn()->assertOk()->json('attendance.id');
         Carbon::setTestNow(Carbon::parse('2026-10-06 17:30:00', 'Asia/Jakarta'));
-        $this->postJson('/attendance/check-out', ['attendance_id' => $id])->assertOk()
+        $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 90])->assertOk()
             ->assertJsonPath('attendance.duration_seconds', 34200)
             ->assertJsonPath('attendance.normal_seconds', 28800)
             ->assertJsonPath('attendance.overtime_seconds', 5400)
             ->assertJsonPath('attendance.status', 'Lembur');
         Carbon::setTestNow(Carbon::parse('2026-10-06 18:30:00', 'Asia/Jakarta'));
-        $this->postJson('/attendance/check-out', ['attendance_id' => $id])->assertOk()
+        $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 0])->assertOk()
             ->assertJsonPath('attendance.duration_seconds', 34200);
     }
 
@@ -101,7 +101,7 @@ class AttendanceTest extends TestCase
         foreach ([60 => 'Kurang dari 8 jam', 28800 => 'Normal'] as $seconds => $status) {
             $id = $this->checkIn()->assertOk()->json('attendance.id');
             Carbon::setTestNow(now()->addSeconds($seconds));
-            $this->postJson('/attendance/check-out', ['attendance_id' => $id])->assertOk()
+            $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 0])->assertOk()
                 ->assertJsonPath('attendance.normal_seconds', $seconds)
                 ->assertJsonPath('attendance.overtime_seconds', 0)
                 ->assertJsonPath('attendance.status', $status);
@@ -115,7 +115,7 @@ class AttendanceTest extends TestCase
         Carbon::setTestNow(Carbon::parse('2026-11-01 09:00:00', 'Asia/Jakarta'));
         $this->getJson('/attendance/status')->assertOk()->assertJsonPath('attendance.id', $id)
             ->assertJsonPath('attendance.checked_out_at', null);
-        $this->postJson('/attendance/check-out', ['attendance_id' => $id])->assertOk()
+        $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 180])->assertOk()
             ->assertJsonPath('attendance.duration_seconds', 39600)
             ->assertJsonPath('attendance.overtime_seconds', 10800);
         $this->actingAs($this->user('admin', 'admin', 1));
@@ -127,12 +127,12 @@ class AttendanceTest extends TestCase
     {
         $id = $this->checkIn()->assertOk()->json('attendance.id');
         Carbon::setTestNow(now()->addHours(10));
-        $this->postJson('/attendance/check-out', ['attendance_id' => $id])->assertOk();
+        $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 120])->assertOk();
         $this->checkIn()->assertOk();
         $this->actingAs($this->user('staff-2', 'cashier', 2));
         $id = $this->checkIn()->assertOk()->json('attendance.id');
         Carbon::setTestNow(now()->addHours(12));
-        $this->postJson('/attendance/check-out', ['attendance_id' => $id])->assertOk();
+        $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 240])->assertOk();
         $this->actingAs($this->user('admin', 'admin', 1));
         $this->get('/attendance?month=2026-10')->assertOk()
             ->assertViewHas('totals', fn ($v) => (int) $v->overtime_seconds === 7200 && (int) $v->open_count === 1)
@@ -153,12 +153,12 @@ class AttendanceTest extends TestCase
         $id = $this->checkIn()->assertOk()->json('attendance.id');
         $this->get('/attendance')->assertForbidden();
         $this->actingAs($this->user('other', 'kasir', 1));
-        $this->postJson('/attendance/check-out', ['attendance_id' => $id])->assertNotFound();
+        $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 0])->assertNotFound();
         foreach (['admin', 'superadmin', 'warehouse'] as $role) {
             $this->actingAs($this->user($role, $role, 1));
             $this->checkIn()->assertForbidden();
             $this->getJson('/attendance/status')->assertForbidden();
-            $this->postJson('/attendance/check-out', ['attendance_id' => $id])->assertForbidden();
+            $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 0])->assertForbidden();
         }
         $this->actingAs($this->user('no-store', 'staff', null));
         $this->checkIn()->assertStatus(422);
@@ -219,7 +219,7 @@ class AttendanceTest extends TestCase
         Carbon::setTestNow(Carbon::parse('2026-11-01 00:30:00', 'Asia/Jakarta'));
         $id = $this->checkIn()->assertOk()->json('attendance.id');
         Carbon::setTestNow(now()->addHours(9));
-        $this->postJson('/attendance/check-out', ['attendance_id' => $id])->assertOk();
+        $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 60])->assertOk();
         DB::table('users')->where('id', 'staff-1')->update(['deleted_at' => now()]);
         $this->actingAs($this->user('admin', 'admin', 1));
         $this->get('/attendance?month=2026-11')->assertOk()->assertSee('staff-1')
@@ -228,15 +228,15 @@ class AttendanceTest extends TestCase
             ->assertViewHas('rows', fn ($v) => $v->total() === 0);
     }
 
-    public function test_same_day_sessions_merge_and_overtime_uses_daily_total_excluding_gaps(): void
+    public function test_same_day_sessions_merge_and_sum_manual_overtime(): void
     {
         $id = $this->checkIn()->assertOk()->json('attendance.id');
         Carbon::setTestNow(Carbon::parse('2026-10-06 12:00:00', 'Asia/Jakarta'));
-        $this->postJson('/attendance/check-out', ['attendance_id' => $id])->assertOk();
+        $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 0])->assertOk();
         Carbon::setTestNow(Carbon::parse('2026-10-06 13:00:00', 'Asia/Jakarta'));
         $id = $this->checkIn()->assertOk()->json('attendance.id');
         Carbon::setTestNow(Carbon::parse('2026-10-06 18:00:00', 'Asia/Jakarta'));
-        $this->postJson('/attendance/check-out', ['attendance_id' => $id])->assertOk()
+        $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 60])->assertOk()
             ->assertJsonPath('attendance.daily.duration_seconds', 32400)
             ->assertJsonPath('attendance.daily.overtime_seconds', 3600);
         $this->assertSame(2, Attendance::count());
@@ -252,12 +252,35 @@ class AttendanceTest extends TestCase
         Carbon::setTestNow(Carbon::parse('2026-10-06 23:00:00', 'Asia/Jakarta'));
         $id = $this->checkIn()->assertOk()->json('attendance.id');
         Carbon::setTestNow(now()->addMinutes(30));
-        $this->postJson('/attendance/check-out', ['attendance_id' => $id])->assertOk();
+        $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 0])->assertOk();
         Carbon::setTestNow(Carbon::parse('2026-10-07 00:00:00', 'Asia/Jakarta'));
         $id = $this->checkIn()->assertOk()->json('attendance.id');
         Carbon::setTestNow(now()->addMinutes(30));
-        $this->postJson('/attendance/check-out', ['attendance_id' => $id])->assertOk();
+        $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 0])->assertOk();
         $this->actingAs($this->user('admin', 'admin', 1));
         $this->get('/attendance?month=2026-10')->assertOk()->assertViewHas('rows', fn ($v) => $v->total() === 2);
     }
+    public function test_long_shift_with_manual_zero_has_no_automatic_overtime(): void
+    {
+        $id = $this->checkIn()->assertOk()->json('attendance.id');
+        Carbon::setTestNow(now()->addHours(10));
+        $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 0])->assertOk()
+            ->assertJsonPath('attendance.overtime_seconds', 0)
+            ->assertJsonPath('attendance.daily.overtime_seconds', 0);
+    }
+
+    public function test_manual_overtime_is_required_and_cannot_exceed_session(): void
+    {
+        $id = $this->checkIn()->assertOk()->json('attendance.id');
+        Carbon::setTestNow(now()->addHours(2));
+        $this->postJson('/attendance/check-out', ['attendance_id' => $id])->assertUnprocessable();
+        foreach ([-1, 1.5, 121] as $minutes) {
+            $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => $minutes])->assertUnprocessable();
+        }
+        $this->assertNull(Attendance::findOrFail($id)->checked_out_at);
+        $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 30])->assertOk()
+            ->assertJsonPath('attendance.overtime_seconds', 1800)
+            ->assertJsonPath('attendance.daily.overtime_seconds', 1800);
+    }
+
 }

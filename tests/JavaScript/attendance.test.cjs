@@ -7,10 +7,10 @@ const source = fs.readFileSync('public/assets/js/attendance.js', 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 function setup(options = {}) {
     const elements = {};
-    for (const id of ['widget', 'modal', 'action', 'detail', 'hint', 'modal-title', 'modal-intro', 'message', 'confirm-out']) {
+    for (const id of ['widget', 'modal', 'action', 'detail', 'hint', 'modal-title', 'modal-intro', 'message', 'confirm-out', 'overtime-fields', 'overtime-minutes']) {
         const classes = new Set();
         elements[id] = {
-            textContent: '', disabled: false, dataset: {}, handlers: {},
+            value: '', reportValidity() { return this.value !== '' && Number.isInteger(Number(this.value)) && Number(this.value) >= 0; }, textContent: '', disabled: false, dataset: {}, handlers: {},
             addEventListener(type, handler) { this.handlers[type] = handler; },
             classList: {
                 add: value => classes.add(value), remove: value => classes.delete(value),
@@ -65,8 +65,9 @@ test('check-out requires confirmation and displays completed summary', async () 
     h.elements.action.handlers.click();
     assert.equal(h.calls.length, 1);
     assert.equal(h.elements['confirm-out'].classList.contains('d-none'), false);
+    h.elements['overtime-minutes'].value = '90';
     h.elements['confirm-out'].handlers.click();
-    assert.deepEqual(JSON.parse(h.calls[1].options.body), {attendance_id: 7});
+    assert.deepEqual(JSON.parse(h.calls[1].options.body), {attendance_id: 7, overtime_minutes: 90});
     await h.respond(1, closedShift);
     assert.equal(h.elements['modal-title'].textContent, 'Absen keluar berhasil');
     assert.equal(h.elements.action.textContent, 'Absen Masuk');
@@ -119,4 +120,16 @@ test('retry initializes recovered dependency without refreshing the page', async
     assert.equal(h.calls.length, 1);
     await h.respond(0, null);
     assert.equal(h.elements.action.textContent, 'Absen Masuk');
+});
+
+test('checkout requires explicit overtime and accepts zero without automatic calculation', async () => {
+    const h = setup();
+    await h.respond(0, openShift);
+    h.elements.action.handlers.click();
+    h.elements['confirm-out'].handlers.click();
+    assert.equal(h.calls.length, 1);
+    h.elements['overtime-minutes'].value = '0';
+    h.elements['confirm-out'].handlers.click();
+    assert.equal(JSON.parse(h.calls[1].options.body).overtime_minutes, 0);
+    await h.respond(1, closedShift);
 });

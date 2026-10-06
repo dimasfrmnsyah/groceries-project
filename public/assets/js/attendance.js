@@ -23,6 +23,8 @@
         const message = document.getElementById('attendance-message');
         const confirm = document.getElementById('attendance-confirm-out');
         const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
+        const overtimeFields = document.getElementById('attendance-overtime-fields');
+        const overtimeInput = document.getElementById('attendance-overtime-minutes');
         let attendance = null;
         let ready = false;
         let busy = false;
@@ -45,13 +47,15 @@
         }
 
         function showDetails(confirmExit) {
+            overtimeFields.classList.toggle('d-none', !confirmExit);
+            if (confirmExit) overtimeInput.value = '';
             confirmedId = confirmExit && attendance ? attendance.id : null;
             title.textContent = confirmExit ? 'Akhiri shift sekarang?' : 'Detail absensi';
             const summary = attendance && (attendance.daily || attendance);
             intro.textContent = attendance && attendance.daily
                 ? 'Rekap tanggal masuk ' + attendance.daily.date + ' · ' + attendance.daily.session_count + ' sesi. Total hanya menghitung sesi yang sudah selesai.'
                 : 'Ringkasan absensi Anda.';
-            if (confirmExit) intro.textContent += ' Konfirmasi untuk mengakhiri sesi yang sedang aktif.';
+            if (confirmExit) intro.textContent += ' Isi durasi lembur lalu konfirmasi absen keluar.';
             modalElement.querySelectorAll('[data-attendance-field]').forEach(function (node) {
                 node.textContent = summary ? (summary[node.dataset.attendanceField] ?? '—') : '—';
             });
@@ -132,12 +136,17 @@
 
         async function save(checkOutId) {
             if (busy) return;
+            let overtimeMinutes = 0;
+            if (checkOutId) {
+                if (!overtimeInput.reportValidity()) return;
+                overtimeMinutes = Number(overtimeInput.value);
+            }
             busy = true;
             render();
             try {
                 if (!checkOutId && !requestKey) requestKey = uuid();
                 attendance = await request(checkOutId ? widget.dataset.checkOutUrl : widget.dataset.checkInUrl,
-                    checkOutId ? { attendance_id: checkOutId } : { request_key: requestKey });
+                    checkOutId ? { attendance_id: checkOutId, overtime_minutes: overtimeMinutes } : { request_key: requestKey });
                 requestKey = null;
                 ready = true;
                 showDetails(false);

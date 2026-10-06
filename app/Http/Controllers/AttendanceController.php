@@ -61,7 +61,10 @@ class AttendanceController extends Controller
     public function checkOut(Request $request)
     {
         $this->cashier($request);
-        $data = $request->validate(['attendance_id' => 'required|integer|min:1']);
+        $data = $request->validate([
+            'attendance_id' => 'required|integer|min:1',
+            'overtime_minutes' => 'required|integer|min:0|max:525600',
+        ], ['overtime_minutes.required' => 'Isi durasi lembur dalam menit, atau 0 jika tidak lembur.']);
         $user = $request->user();
         $row = DB::transaction(function () use ($user, $data) {
             DB::table('users')->where('id', $user->id)->lockForUpdate()->first();
@@ -73,12 +76,18 @@ class AttendanceController extends Controller
             $start = CarbonImmutable::parse($row->checked_in_at, 'UTC');
             abort_if($end->lt($start), 409, 'Waktu server lebih awal dari waktu masuk. Silakan hubungi admin.');
             $seconds = (int) $start->diffInSeconds($end);
+            $overtime = (int) $data['overtime_minutes'] * 60;
+            if ($overtime > $seconds) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'overtime_minutes' => 'Lembur tidak boleh melebihi durasi sesi kerja.',
+                ]);
+            }
             $row->update([
                 'checked_out_at' => $end->format('Y-m-d H:i:s'),
                 'active_user_id' => null,
                 'duration_seconds' => $seconds,
-                'normal_seconds' => min($seconds, Attendance::NORMAL_SECONDS),
-                'overtime_seconds' => max(0, $seconds - Attendance::NORMAL_SECONDS),
+                'normal_seconds' => min($seconds - $overtime, Attendance::NORMAL_SECONDS),
+                'overtime_seconds' => $overtime,
             ]);
             return $row;
         }, 3);
