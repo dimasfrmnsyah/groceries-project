@@ -791,6 +791,7 @@ class AccountingController extends Controller
             'cashier_name' => 'required|string|max:255',
             'audited_at' => 'required|date',
             'denominations_payload' => 'required|json',
+            'qr_amount' => 'nullable|numeric|min:0|max:999999999999.99|decimal:0,2',
             'description' => 'nullable|string|max:255',
         ];
         $data = $request->validate($rules);
@@ -1018,6 +1019,8 @@ class AccountingController extends Controller
             $physical += $count * $option['value'];
         }
 
+        $qr = round((float) ($data['qr_amount'] ?? 0), 2);
+        $total = $physical + $qr;
         $auditedAt = \Carbon\Carbon::parse($data['audited_at'], 'Asia/Jakarta');
         $turnover = $this->salesTurnover((int) $data['store_id'], $data['cashier_name'], $auditedAt->toDateTimeString());
 
@@ -1027,8 +1030,9 @@ class AccountingController extends Controller
             'audited_at' => $auditedAt->toDateTimeString(),
             'store_id' => (int) $data['store_id'],
             'running_turnover' => $turnover,
-            'nominal' => $physical,
-            'difference' => $physical - $turnover,
+            'qr_amount' => $qr,
+            'nominal' => $total,
+            'difference' => $total - $turnover,
             'denominations' => json_encode($counts),
             'description' => $data['description'] ?? null,
         ];

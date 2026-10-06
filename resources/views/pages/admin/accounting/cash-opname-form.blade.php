@@ -109,6 +109,12 @@
             <div class="card border-0 shadow-sm position-sticky" style="top:90px">
                 <div class="card-body p-4">
                     <h5 class="mb-3">Hasil Audit</h5>
+                    <label for="qr-amount" class="form-label fw-semibold">Jumlah QR</label>
+                    <div class="input-group mb-3">
+                        <span class="input-group-text">Rp</span>
+                        <input type="number" name="qr_amount" id="qr-amount" min="0" max="999999999999.99" step="0.01" value="{{ old('qr_amount', $row->qr_amount ?? 0) }}" class="form-control @error('qr_amount') is-invalid @enderror">
+                        @error('qr_amount') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                    </div>
                     <div class="rounded bg-light p-3 mb-2">
                         <div class="text-muted small">Omzet sampai waktu audit</div>
                         <div class="fs-4 fw-semibold" id="turnover-display">Rp {{ number_format($row->running_turnover ?? 0, 0, ',', '.') }}</div>
@@ -118,8 +124,12 @@
                         <div class="text-muted small">Total uang fisik</div>
                         <div class="fs-4 fw-semibold" id="physical-display">Rp 0</div>
                     </div>
+                    <div class="rounded bg-light p-3 mb-2">
+                        <div class="text-muted small">Total uang fisik + QR</div>
+                        <div class="fs-4 fw-semibold" id="audit-total-display">Rp 0</div>
+                    </div>
                     <div class="rounded p-3 mb-3 border" id="difference-box">
-                        <div class="text-muted small">Selisih fisik − omzet</div>
+                        <div class="text-muted small">Selisih (fisik + QR) − omzet</div>
                         <div class="fs-3 fw-bold" id="difference-display">Rp 0</div>
                         <div class="small" id="difference-label">Seimbang</div>
                     </div>
@@ -141,6 +151,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const auditTime = document.getElementById('audit-time');
     const turnoverDisplay = document.getElementById('turnover-display');
     const turnoverStatus = document.getElementById('turnover-status');
+    const qrAmount = document.getElementById('qr-amount');
+    const auditTotalDisplay = document.getElementById('audit-total-display');
     const physicalDisplay = document.getElementById('physical-display');
     const differenceDisplay = document.getElementById('difference-display');
     const differenceLabel = document.getElementById('difference-label');
@@ -202,7 +214,9 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function renderDifference() {
-        const difference = physical - turnover;
+        const total = Math.round((physical + Math.max(0, Number(qrAmount.value || 0))) * 100) / 100;
+        auditTotalDisplay.textContent = rupiah(total);
+        const difference = Math.round((total - turnover) * 100) / 100;
         differenceDisplay.textContent = (difference > 0 ? '+ ' : difference < 0 ? '− ' : '') + rupiah(difference);
         differenceLabel.textContent = difference > 0 ? 'Kas lebih' : difference < 0 ? 'Kas kurang' : 'Seimbang';
         differenceBox.classList.toggle('border-success', difference > 0);
@@ -240,6 +254,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     document.querySelectorAll('.denomination-count').forEach(input => input.addEventListener('input', calculatePhysical));
+    qrAmount.addEventListener('input', renderDifference);
     store.addEventListener('change', function () {
         filterCashiersByStore();
         loadTurnover();

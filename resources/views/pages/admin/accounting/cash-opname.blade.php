@@ -43,7 +43,7 @@
     <div class="card-body">
         <div class="table-responsive">
             <table class="table table-bordered table-striped align-middle">
-                <thead><tr><th>Waktu Audit</th><th>Toko</th><th>Kasir</th><th class="text-end">Omzet</th><th class="text-end">Fisik</th><th class="text-end">Selisih</th><th>Keterangan</th><th style="width: 140px;">Aksi</th></tr></thead>
+                <thead><tr><th>Waktu Audit</th><th>Toko</th><th>Kasir</th><th class="text-end">Omzet</th><th class="text-end">Total Fisik + QR</th><th class="text-end">Selisih</th><th>Keterangan</th><th style="width: 140px;">Aksi</th></tr></thead>
                 <tbody>
                     @forelse($rows as $row)
                         <tr>
@@ -51,7 +51,7 @@
                             <td>{{ $row->store_name ?? '-' }}</td>
                             <td>{{ $row->cashier_name ?? '-' }}</td>
                             <td class="text-end">Rp {{ number_format($row->running_turnover, 0, ',', '.') }}</td>
-                            <td class="text-end">Rp {{ number_format($row->nominal, 0, ',', '.') }}</td>
+                            <td class="text-end">Rp {{ number_format($row->nominal, 2, ',', '.') }}<div class="small text-muted">QR: Rp {{ number_format($row->qr_amount ?? 0, 2, ',', '.') }}</div></td>
                             <td class="text-end fw-semibold {{ $row->difference < 0 ? 'text-danger' : ($row->difference > 0 ? 'text-success' : 'text-muted') }}">
                                 {{ $row->difference > 0 ? '+' : ($row->difference < 0 ? '−' : '') }} Rp {{ number_format(abs($row->difference), 0, ',', '.') }}
                                 <div class="small fw-normal">{{ $row->difference > 0 ? 'Lebih' : ($row->difference < 0 ? 'Kurang' : 'Seimbang') }}</div>
