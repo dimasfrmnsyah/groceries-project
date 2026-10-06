@@ -9,9 +9,18 @@
                 <div id="attendance-message" class="alert alert-danger d-none" role="alert"></div>
                 <p id="attendance-modal-intro" class="text-muted"></p>
                 <div id="attendance-overtime-fields" class="mb-3 d-none">
-                    <label for="attendance-overtime-minutes" class="form-label">Lembur sesi ini (menit)</label>
-                    <input type="number" id="attendance-overtime-minutes" class="form-control" min="0" max="525600" step="1" required placeholder="Contoh: 60 untuk 1 jam">
-                    <small class="text-muted">Wajib diisi. Masukkan 0 jika tidak lembur.</small>
+                    <div class="form-label">Lembur sesi ini</div>
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <label for="attendance-overtime-hours" class="form-label">Jam</label>
+                            <input type="number" id="attendance-overtime-hours" class="form-control" min="0" max="8760" step="1" required placeholder="0" inputmode="numeric">
+                        </div>
+                        <div class="col-6">
+                            <label for="attendance-overtime-minutes" class="form-label">Menit</label>
+                            <input type="number" id="attendance-overtime-minutes" class="form-control" min="0" max="59" step="1" required placeholder="0" inputmode="numeric">
+                        </div>
+                    </div>
+                    <small class="text-muted">Isi kedua kolom. Contoh: 1 jam 30 menit. Jika tidak lembur, isi 0 jam dan 0 menit.</small>
                 </div>
                 <dl class="row mb-0" id="attendance-summary">
                     <dt class="col-4">Absen masuk</dt><dd class="col-8" data-attendance-field="checked_in_at"></dd>

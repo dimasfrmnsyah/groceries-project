@@ -24,6 +24,7 @@
         const confirm = document.getElementById('attendance-confirm-out');
         const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
         const overtimeFields = document.getElementById('attendance-overtime-fields');
+        const overtimeHours = document.getElementById('attendance-overtime-hours');
         const overtimeInput = document.getElementById('attendance-overtime-minutes');
         let attendance = null;
         let ready = false;
@@ -48,7 +49,10 @@
 
         function showDetails(confirmExit) {
             overtimeFields.classList.toggle('d-none', !confirmExit);
-            if (confirmExit) overtimeInput.value = '';
+            if (confirmExit) {
+                overtimeHours.value = '';
+                overtimeInput.value = '';
+            }
             confirmedId = confirmExit && attendance ? attendance.id : null;
             title.textContent = confirmExit ? 'Akhiri shift sekarang?' : 'Detail absensi';
             const summary = attendance && (attendance.daily || attendance);
@@ -138,8 +142,8 @@
             if (busy) return;
             let overtimeMinutes = 0;
             if (checkOutId) {
-                if (!overtimeInput.reportValidity()) return;
-                overtimeMinutes = Number(overtimeInput.value);
+                if (!overtimeHours.reportValidity() || !overtimeInput.reportValidity()) return;
+                overtimeMinutes = Number(overtimeHours.value) * 60 + Number(overtimeInput.value);
             }
             busy = true;
             render();

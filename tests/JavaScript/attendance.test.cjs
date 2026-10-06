@@ -7,7 +7,7 @@ const source = fs.readFileSync('public/assets/js/attendance.js', 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 function setup(options = {}) {
     const elements = {};
-    for (const id of ['widget', 'modal', 'action', 'detail', 'hint', 'modal-title', 'modal-intro', 'message', 'confirm-out', 'overtime-fields', 'overtime-minutes']) {
+    for (const id of ['widget', 'modal', 'action', 'detail', 'hint', 'modal-title', 'modal-intro', 'message', 'confirm-out', 'overtime-fields', 'overtime-hours', 'overtime-minutes']) {
         const classes = new Set();
         elements[id] = {
             value: '', reportValidity() { return this.value !== '' && Number.isInteger(Number(this.value)) && Number(this.value) >= 0; }, textContent: '', disabled: false, dataset: {}, handlers: {},
@@ -65,7 +65,8 @@ test('check-out requires confirmation and displays completed summary', async () 
     h.elements.action.handlers.click();
     assert.equal(h.calls.length, 1);
     assert.equal(h.elements['confirm-out'].classList.contains('d-none'), false);
-    h.elements['overtime-minutes'].value = '90';
+    h.elements['overtime-hours'].value = '1';
+    h.elements['overtime-minutes'].value = '30';
     h.elements['confirm-out'].handlers.click();
     assert.deepEqual(JSON.parse(h.calls[1].options.body), {attendance_id: 7, overtime_minutes: 90});
     await h.respond(1, closedShift);
@@ -128,8 +129,20 @@ test('checkout requires explicit overtime and accepts zero without automatic cal
     h.elements.action.handlers.click();
     h.elements['confirm-out'].handlers.click();
     assert.equal(h.calls.length, 1);
+    h.elements['overtime-hours'].value = '0';
     h.elements['overtime-minutes'].value = '0';
     h.elements['confirm-out'].handlers.click();
     assert.equal(JSON.parse(h.calls[1].options.body).overtime_minutes, 0);
     await h.respond(1, closedShift);
+});
+
+test('checkout rejects minutes outside 0 through 59', async () => {
+    const h = setup();
+    await h.respond(0, openShift);
+    h.elements.action.handlers.click();
+    h.elements['overtime-hours'].value = '1';
+    h.elements['overtime-minutes'].value = '60';
+    h.elements['overtime-minutes'].reportValidity = () => false;
+    h.elements['confirm-out'].handlers.click();
+    assert.equal(h.calls.length, 1);
 });
