@@ -54,6 +54,10 @@ Auth::routes();
 
 
 Route::group(['middleware' => ['auth']], function () {
+    Route::get('/attendance', [App\Http\Controllers\AttendanceController::class, 'index'])->name('attendance.index');
+    Route::get('/attendance/status', [App\Http\Controllers\AttendanceController::class, 'status'])->name('attendance.status');
+    Route::post('/attendance/check-in', [App\Http\Controllers\AttendanceController::class, 'checkIn'])->name('attendance.check-in');
+    Route::post('/attendance/check-out', [App\Http\Controllers\AttendanceController::class, 'checkOut'])->name('attendance.check-out');
     Route::get('/', [HomeController::class, 'index'])->name('home');
     Route::post('/staff/logout-revenue', [StaffController::class, 'submitRevenueAndLogout'])->name('staff.submitRevenueAndLogout');
 

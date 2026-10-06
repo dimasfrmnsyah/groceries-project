@@ -94,6 +94,7 @@ class TbUserController extends Controller
             'password' => 'required|min:8|confirmed',
             'roles' => ['required', Rule::in($this->assignableRoles())],
             'is_lock' => ['nullable', 'boolean'],
+            'revenue_simple_mode' => ['sometimes', 'boolean'],
             'store_id' => 'nullable|integer|exists:tb_stores,id',
             'store_ids' => 'nullable|array',
             'store_ids.*' => 'integer|exists:tb_stores,id',
@@ -112,6 +113,9 @@ class TbUserController extends Controller
         $data['is_lock'] = $this->isCashierRole($role)
             ? (int) $request->boolean('is_lock')
             : 0;
+        $data['revenue_simple_mode'] = $this->isCashierRole($role)
+            ? (int) $request->boolean('revenue_simple_mode', true)
+            : 1;
         $actor = auth()->user();
         if ($actor && strtolower((string) $actor->roles) !== 'superadmin') {
             $allowed = store_access_ids($actor);
@@ -205,6 +209,7 @@ class TbUserController extends Controller
             'email' => 'required|string|email|max:255|unique:users,email,' . $id,
             'roles' => ['required', Rule::in($this->assignableRoles($user->roles))],
             'is_lock' => ['nullable', 'boolean'],
+            'revenue_simple_mode' => ['sometimes', 'boolean'],
             'store_id' => 'nullable|integer|exists:tb_stores,id',
             'store_ids' => 'nullable|array',
             'store_ids.*' => 'integer|exists:tb_stores,id',
@@ -223,6 +228,9 @@ class TbUserController extends Controller
         $data['is_lock'] = $this->isCashierRole($role)
             ? (int) $request->boolean('is_lock')
             : 0;
+        $data['revenue_simple_mode'] = $this->isCashierRole($role)
+            ? (int) $request->boolean('revenue_simple_mode', $user->usesSimpleRevenue())
+            : 1;
         $actor = auth()->user();
         if ($actor && strtolower((string) $actor->roles) !== 'superadmin') {
             $allowed = store_access_ids($actor);

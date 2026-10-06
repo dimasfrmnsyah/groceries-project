@@ -39,24 +39,29 @@ class StaffController extends Controller
     {
         $user = $request->user();
         $this->ensureCashier($user);
+        $request->session()->flash('revenue_form', true);
 
-        $data = $request->validate([
-            'amount' => ['nullable', 'numeric', 'min:0'],
-            'qr' => ['nullable', 'numeric', 'min:0', 'max:999999999999.99'],
-            'pengeluaran' => ['nullable', 'numeric', 'min:0', 'max:999999999999.99'],
+        // The persisted account setting decides the mode, never a submitted flag.
+        $simple = $user->usesSimpleRevenue();
+        $moneyRules = ['numeric', 'min:0', 'max:999999999999.99', 'regex:/^\d+(?:\.\d{1,2})?$/'];
+        $data = $request->validate(array_merge([
+            'amount' => array_merge(['required'], $moneyRules),
+        ], $simple ? [] : [
+            'qr' => array_merge(['nullable'], $moneyRules),
+            'pengeluaran' => array_merge(['nullable'], $moneyRules),
             'denominations_payload' => ['nullable', 'json'],
             'denominations' => ['nullable', 'array'],
-        ]);
+        ]), ['amount.required' => 'Total pendapatan wajib diisi.']);
 
         $date = Carbon::now('Asia/Jakarta')->toDateString();
         $hasDenominationInput = trim((string) ($data['denominations_payload'] ?? '')) !== ''
             || is_array($data['denominations'] ?? null);
-        if (!$hasDenominationInput && trim((string) ($data['amount'] ?? '')) === '') {
+        if (!$simple && !$hasDenominationInput) {
             throw \Illuminate\Validation\ValidationException::withMessages([
-                'amount' => 'Pendapatan wajib diisi.',
+                'denominations' => 'Rincian pecahan uang wajib diisi untuk akun ini.',
             ]);
         }
-        $denominations = $hasDenominationInput
+        $denominations = !$simple
             ? $this->validateDenominations(
                 $data['denominations_payload'] ?? null,
                 $data['denominations'] ?? null
@@ -64,19 +69,23 @@ class StaffController extends Controller
             : null;
         $qr = (float) ($data['qr'] ?? 0);
         $pengeluaran = (float) ($data['pengeluaran'] ?? 0);
-        // Kompatibilitas browser lama: sebelum rincian pecahan tersedia,
-        // nominal lama tetap boleh dipakai. Browser baru selalu mengirim
-        // denominations sehingga nominal dihitung ulang di server.
+        // In detailed mode the server recomputes and verifies the submitted total.
         $calculatedAmount = $denominations !== null
             ? $this->denominationsTotal($denominations) + $qr + $pengeluaran
-            : (float) ($data['amount'] ?? 0);
+            : (float) $data['amount'];
+
+        if (!$simple && !$this->moneyEquals($data['amount'], $calculatedAmount)) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'amount' => 'Total pendapatan harus sama dengan jumlah pecahan uang, QR, dan pengeluaran.',
+            ]);
+        }
 
         if ($this->isRevenueLocked($user)) {
             $expected = $this->salesTotalForUser($user, $date);
             if (!$this->moneyEquals($calculatedAmount, $expected)) {
                 return back()
                     ->withInput()
-                    ->with('revenue_error', 'Pendapatan belum sesuai. Periksa kembali rincian uang yang diinput.');
+                    ->with('revenue_error', 'Pendapatan belum sesuai dengan total penjualan. Periksa kembali input pendapatan.');
             }
         }
 

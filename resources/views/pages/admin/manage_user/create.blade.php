@@ -52,6 +52,17 @@
                    {{ $isLockChecked ? 'checked' : '' }}>
             <label class="form-check-label" for="is-lock">Wajib cocok dengan total penjualan sebelum logout</label>
           </div>
+          <div class="form-check form-switch mt-3">
+            <input type="hidden" name="revenue_simple_mode" value="0" id="revenue-simple-mode-unchecked">
+            <input class="form-check-input" type="checkbox" role="switch"
+                   name="revenue_simple_mode" value="1" id="revenue-simple-mode"
+                   @checked((int) old('revenue_simple_mode', isset($user) ? (int) $user->usesSimpleRevenue() : 1) === 1)>
+            <label class="form-check-label" for="revenue-simple-mode">Input pendapatan tanpa rincian pecahan</label>
+          </div>
+          <small class="text-muted d-block mt-1">Aktif: cukup isi total pendapatan. Nonaktif: wajib isi pecahan uang, QR, dan pengeluaran. Jika lock aktif, totalnya harus cocok dengan penjualan.</small>
+          @error('revenue_simple_mode')
+            <div class="text-danger">{{ $message }}</div>
+          @enderror
           <small class="text-muted">Pengaturan ini hanya berlaku untuk role staff/kasir/cashier.</small>
           @error('is_lock')
             <div class="text-danger">{{ $message }}</div>
@@ -211,6 +222,8 @@
     const storeHelp = document.getElementById('store-help');
     const cashierLockWrap = document.getElementById('cashier-lock-wrap');
     const cashierLockInput = document.getElementById('is-lock');
+    const revenueSimpleInput = document.getElementById('revenue-simple-mode');
+    const revenueSimpleUnchecked = document.getElementById('revenue-simple-mode-unchecked');
 
     const setStoreMode = (role) => {
       if (!storeHelp || !storeMultiWrap || !storeSingleWrap || !storeSingleSelect) return;
@@ -222,6 +235,8 @@
       if (cashierLockWrap && cashierLockInput) {
         cashierLockWrap.classList.toggle('d-none', !isStaff);
         cashierLockInput.disabled = !isStaff;
+        if (revenueSimpleInput) revenueSimpleInput.disabled = !isStaff;
+        if (revenueSimpleUnchecked) revenueSimpleUnchecked.disabled = !isStaff;
         if (!isStaff) cashierLockInput.checked = false;
       }
 

@@ -34,6 +34,9 @@
 	<div class="wrapper">
 		@include('layouts.sidebar')
         @include('layouts.header')
+        @if(Auth::check() && in_array(strtolower(trim(Auth::user()->roles ?? '')), \App\Models\Attendance::CASHIER_ROLES, true))
+            @include('partials.attendance-modal')
+        @endif
 		<div class="page-wrapper">
 			<div class="page-content">
                 {{-- Content --}}

@@ -36,9 +36,9 @@ class LoginController extends Controller
 
         if ($user
             && in_array($role, ['staff', 'kasir', 'cashier'], true)
-            && Schema::hasColumn('users', 'is_lock')
-            && (bool) $user->is_lock) {
-            return redirect()->back()->with('revenue_error', 'Akun kasir terkunci. Masukkan pendapatan harian terlebih dahulu.');
+            && ((Schema::hasColumn('users', 'is_lock') && (bool) $user->is_lock)
+                || !$user->usesSimpleRevenue())) {
+            return redirect()->back()->with('revenue_error', 'Masukkan pendapatan harian sesuai pengaturan akun sebelum logout.');
         }
 
         $this->guard()->logout();

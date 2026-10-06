@@ -27,6 +27,7 @@ class User extends Authenticatable
         'roles',
         'store_id',
         'is_lock',
+        'revenue_simple_mode',
         'uuid'
     ];
 
@@ -49,8 +50,14 @@ class User extends Authenticatable
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
         'is_lock' => 'boolean',
+        'revenue_simple_mode' => 'boolean',
     ];
 
+
+    public function usesSimpleRevenue(): bool
+    {
+        return (bool) ($this->revenue_simple_mode ?? true);
+    }
 
     public function store() {
         return $this->belongsTo(tb_stores::class, 'store_id');

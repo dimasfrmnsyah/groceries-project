@@ -2,6 +2,9 @@
     <div class="topbar d-flex align-items-center">
         <nav class="navbar navbar-expand">
             <div class="mobile-toggle-menu"><i class='bx bx-menu'></i></div>
+            @if(Auth::check() && in_array(strtolower(trim(Auth::user()->roles ?? '')), \App\Models\Attendance::CASHIER_ROLES, true))
+                @include('partials.attendance-widget')
+            @endif
             <div class="search-bar flex-grow-1"></div>
             <div class="top-menu ms-auto">
                 <ul class="navbar-nav align-items-center">
@@ -114,23 +117,37 @@
     @if(Auth::check() && in_array(strtolower(Auth::user()->roles ?? ''), ['staff', 'kasir', 'cashier'], true))
     @php
         $revenueDenominationOptions = \App\Support\CashDenominations::all();
+        $revenueSimple = Auth::user()->usesSimpleRevenue();
         $revenueOldCounts = json_decode((string) old('denominations_payload', ''), true)
             ?: (old('denominations', []) ?: []);
     @endphp
     <div class="modal fade" id="revenueModal" tabindex="-1" aria-labelledby="revenueModalLabel" aria-hidden="true">
-        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-dialog {{ $revenueSimple ? '' : 'modal-lg' }} modal-dialog-scrollable">
             <form id="revenueForm"
                   method="POST"
                   action="{{ route('staff.submitRevenueAndLogout') }}"
-                  data-revenue-locked="{{ $revenueLockEnabled ? '1' : '0' }}">
+                  data-revenue-locked="{{ $revenueLockEnabled ? '1' : '0' }}"
+                  data-revenue-simple="{{ $revenueSimple ? '1' : '0' }}">
                 @csrf
+                @if(!$revenueSimple)
                 <input type="hidden" name="amount" id="amount" value="{{ old('amount', 0) }}">
                 <input type="hidden" name="denominations_payload" id="denominations-payload" value="{{ old('denominations_payload', '') }}">
+                @endif
                 <div class="modal-content">
                     <div class="modal-header">
                         <h5 class="modal-title" id="revenueModalLabel">Pendapatan Hari Ini</h5>
                     </div>
                     <div class="modal-body">
+                        @if($revenueSimple)
+                        <label for="amount" class="form-label fw-semibold">Total pendapatan</label>
+                        <div class="input-group">
+                            <span class="input-group-text">Rp</span>
+                            <input type="number" name="amount" id="amount" class="form-control text-end"
+                                   value="{{ old('amount', '') }}" min="0" max="999999999999.99"
+                                   step="0.01" inputmode="decimal" required>
+                        </div>
+                        <small class="text-muted d-block mt-2">Masukkan total pendapatan hari ini: uang fisik + QR + pengeluaran. Rincian pecahan tidak diperlukan.</small>
+                        @else
                         <div class="mb-3">
                             <div class="fw-semibold">Rincian pendapatan kasir</div>
                             <small class="text-muted">Masukkan jumlah lembar atau keping uang yang diterima hari ini.</small>
@@ -152,6 +169,7 @@
                                                        min="0"
                                                        max="100000"
                                                        step="1"
+                                                       required
                                                        inputmode="numeric"
                                                        class="form-control text-end revenue-denomination-count"
                                                        style="max-width:150px"
@@ -213,15 +231,19 @@
                                 <span class="fs-3 fw-bold" id="revenue-total-display">Rp 0</span>
                             </div>
                         </div>
+                        @endif
                         @if($revenueLockEnabled)
                             <div class="mt-3 rounded border border-warning-subtle bg-warning-subtle p-3">
                                 <div id="revenueValidationMessage" class="small mt-1 text-danger">
-                                    Tombol logout aktif setelah rincian sesuai.
+                                    Tombol logout aktif setelah total pendapatan sesuai dengan penjualan.
                                 </div>
                             </div>
                         @endif
                         @if(session('revenue_error'))
                             <div class="alert alert-danger mt-3 mb-0">{{ session('revenue_error') }}</div>
+                        @endif
+                        @if(session('revenue_form') && $errors->any())
+                            <div class="alert alert-danger mt-3 mb-0" role="alert">{{ $errors->first() }}</div>
                         @endif
                     </div>
                     <div class="modal-footer">
@@ -254,11 +276,14 @@
         const revenueSubmitButton = document.getElementById('revenueSubmitButton');
         const revenueValidationMessage = document.getElementById('revenueValidationMessage');
         const revenueLocked = revenueForm?.dataset.revenueLocked === '1';
+        const revenueSimple = revenueForm?.dataset.revenueSimple === '1';
         let revenueValidationTimer = null;
+        let revenueValidationVersion = 0;
 
         const revenueRupiah = (value) => 'Rp ' + Number(value || 0).toLocaleString('id-ID');
 
         const calculateRevenueAmount = () => {
+            if (revenueSimple) return Number(revenueAmountInput?.value || 0);
             let cashTotal = 0;
             const counts = {};
             document.querySelectorAll('.revenue-denomination-row').forEach((row) => {
@@ -284,10 +309,15 @@
 
         const validateRevenueAmount = () => {
             if (!revenueLocked || !revenueAmountInput || !revenueSubmitButton) return;
+            const validationVersion = ++revenueValidationVersion;
 
             calculateRevenueAmount();
 
             revenueSubmitButton.disabled = true;
+            if (!revenueForm.checkValidity()) {
+                if (revenueValidationMessage) revenueValidationMessage.textContent = 'Lengkapi pendapatan dengan nominal yang valid.';
+                return;
+            }
             if (revenueValidationMessage) {
                 revenueValidationMessage.textContent = 'Memeriksa nominal...';
                 revenueValidationMessage.className = 'small mt-1 text-muted';
@@ -305,6 +335,7 @@
             })
                 .then(async (response) => {
                     const payload = await response.json().catch(() => ({}));
+                    if (validationVersion !== revenueValidationVersion) return;
                     if (!response.ok) throw new Error(payload.message || 'Validasi pendapatan gagal.');
 
                     const matches = payload.matches === true;
@@ -319,6 +350,7 @@
                     }
                 })
                 .catch((error) => {
+                    if (validationVersion !== revenueValidationVersion) return;
                     revenueSubmitButton.disabled = true;
                     if (revenueValidationMessage) {
                         revenueValidationMessage.textContent = error.message;
@@ -327,18 +359,17 @@
                 });
         };
 
-        document.querySelectorAll('.revenue-denomination-count').forEach((input) => input.addEventListener('input', () => {
+        const onRevenueInput = () => {
             calculateRevenueAmount();
             if (!revenueLocked) return;
+            ++revenueValidationVersion;
+            revenueSubmitButton.disabled = true;
             window.clearTimeout(revenueValidationTimer);
             revenueValidationTimer = window.setTimeout(validateRevenueAmount, 250);
-        }));
-        [revenueQrInput, revenuePengeluaranInput].forEach((input) => input?.addEventListener('input', () => {
-            calculateRevenueAmount();
-            if (!revenueLocked) return;
-            window.clearTimeout(revenueValidationTimer);
-            revenueValidationTimer = window.setTimeout(validateRevenueAmount, 250);
-        }));
+        };
+        document.querySelectorAll('.revenue-denomination-count').forEach((input) => input.addEventListener('input', onRevenueInput));
+        [revenueQrInput, revenuePengeluaranInput, ...(revenueSimple ? [revenueAmountInput] : [])]
+            .forEach((input) => input?.addEventListener('input', onRevenueInput));
         if (revenueLocked) {
             document.getElementById('revenueModal')?.addEventListener('shown.bs.modal', validateRevenueAmount);
         }
@@ -350,7 +381,7 @@
             modal.show();
         }
 
-        @if(session('revenue_error'))
+        @if(session('revenue_error') || (session('revenue_form') && $errors->any()))
             document.addEventListener('DOMContentLoaded', () => showRevenueModal());
         @endif
     </script>
