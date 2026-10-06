@@ -77,16 +77,11 @@ class AttendanceController extends Controller
             abort_if($end->lt($start), 409, 'Waktu server lebih awal dari waktu masuk. Silakan hubungi admin.');
             $seconds = (int) $start->diffInSeconds($end);
             $overtime = (int) $data['overtime_minutes'] * 60;
-            if ($overtime > $seconds) {
-                throw \Illuminate\Validation\ValidationException::withMessages([
-                    'overtime_minutes' => 'Lembur tidak boleh melebihi durasi sesi kerja.',
-                ]);
-            }
             $row->update([
                 'checked_out_at' => $end->format('Y-m-d H:i:s'),
                 'active_user_id' => null,
                 'duration_seconds' => $seconds,
-                'normal_seconds' => min($seconds - $overtime, Attendance::NORMAL_SECONDS),
+                'normal_seconds' => max(0, min($seconds - $overtime, Attendance::NORMAL_SECONDS)),
                 'overtime_seconds' => $overtime,
             ]);
             return $row;

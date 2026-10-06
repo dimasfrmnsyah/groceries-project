@@ -22,6 +22,6 @@ class AttendanceDailyReport
             ->groupBy('user_id', 'store_id')->groupByRaw($date);
 
         return Attendance::query()->fromSub($days, 'attendance_days')->select('attendance_days.*')
-            ->selectRaw('CASE WHEN duration_seconds - overtime_seconds > 28800 THEN 28800 ELSE duration_seconds - overtime_seconds END as normal_seconds');
+            ->selectRaw('CASE WHEN duration_seconds - overtime_seconds < 0 THEN 0 WHEN duration_seconds - overtime_seconds > 28800 THEN 28800 ELSE duration_seconds - overtime_seconds END as normal_seconds');
     }
 }

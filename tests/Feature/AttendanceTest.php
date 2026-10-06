@@ -269,18 +269,30 @@ class AttendanceTest extends TestCase
             ->assertJsonPath('attendance.daily.overtime_seconds', 0);
     }
 
-    public function test_manual_overtime_is_required_and_cannot_exceed_session(): void
+    public function test_manual_overtime_is_required_and_must_be_nonnegative_integer(): void
     {
         $id = $this->checkIn()->assertOk()->json('attendance.id');
         Carbon::setTestNow(now()->addHours(2));
         $this->postJson('/attendance/check-out', ['attendance_id' => $id])->assertUnprocessable();
-        foreach ([-1, 1.5, 121] as $minutes) {
+        foreach ([-1, 1.5] as $minutes) {
             $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => $minutes])->assertUnprocessable();
         }
         $this->assertNull(Attendance::findOrFail($id)->checked_out_at);
         $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 30])->assertOk()
             ->assertJsonPath('attendance.overtime_seconds', 1800)
             ->assertJsonPath('attendance.daily.overtime_seconds', 1800);
+    }
+
+    public function test_manual_overtime_can_exceed_session_without_negative_normal_hours(): void
+    {
+        $id = $this->checkIn()->assertOk()->json('attendance.id');
+        Carbon::setTestNow(now()->addHours(1));
+        $this->postJson('/attendance/check-out', ['attendance_id' => $id, 'overtime_minutes' => 150])->assertOk()
+            ->assertJsonPath('attendance.duration_seconds', 3600)
+            ->assertJsonPath('attendance.overtime_seconds', 9000)
+            ->assertJsonPath('attendance.normal_seconds', 0)
+            ->assertJsonPath('attendance.daily.overtime_seconds', 9000)
+            ->assertJsonPath('attendance.daily.normal_seconds', 0);
     }
 
 }
