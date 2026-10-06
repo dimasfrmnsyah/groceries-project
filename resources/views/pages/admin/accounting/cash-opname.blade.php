@@ -1,9 +1,9 @@
 @extends('layouts.app')
 
 @section('content')
-<div class="page-breadcrumb d-none d-sm-flex align-items-center mb-3">
-    <div class="breadcrumb-title pe-3">Accounting</div>
-    <div class="ps-3">
+<div class="page-breadcrumb d-flex flex-column flex-sm-row align-items-sm-center gap-2 mb-3">
+    <div class="breadcrumb-title pe-3 d-none d-sm-block">Accounting</div>
+    <div class="ps-3 d-none d-sm-block">
         <nav aria-label="breadcrumb">
             <ol class="breadcrumb mb-0 p-0">
                 <li class="breadcrumb-item"><a href="{{ route('home') }}"><i class="bx bx-home-alt"></i></a></li>
@@ -11,7 +11,7 @@
             </ol>
         </nav>
     </div>
-    <div class="ms-auto">
+    <div class="ms-sm-auto">
         <a href="{{ route('accounting.cash-opname.create') }}" class="btn btn-primary">Tambah Cash Opname</a>
     </div>
 </div>
