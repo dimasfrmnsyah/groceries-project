@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const {webcrypto} = require('node:crypto');
 const source = fs.readFileSync('public/assets/js/attendance.js', 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
-function setup() {
+function setup(options = {}) {
     const elements = {};
     for (const id of ['widget', 'modal', 'action', 'detail', 'hint', 'modal-title', 'modal-intro', 'message', 'confirm-out']) {
         const classes = new Set();
@@ -24,12 +24,12 @@ function setup() {
     const calls = [];
     const document = {
         readyState: 'complete',
-        getElementById: id => elements[id.replace('attendance-', '')],
+        getElementById: id => options.missingModal && id === 'attendance-modal' ? null : elements[id.replace('attendance-', '')],
         querySelector: () => ({content: 'csrf'}),
     };
     const bootstrap = {Modal: {getOrCreateInstance: () => ({show() { elements.modal.classList.add('show'); }})}};
     vm.runInNewContext(source, {
-        document, window: {bootstrap, addEventListener() {}}, bootstrap, crypto: webcrypto,
+        document, window: {bootstrap: options.missingBootstrap ? null : bootstrap, addEventListener() {}, location: {reload() {}}}, bootstrap, crypto: webcrypto,
         AbortController, setTimeout, clearTimeout, Uint8Array,
         fetch(url, options) { return new Promise((resolve, reject) => calls.push({url, options, resolve, reject})); },
     });
@@ -93,5 +93,17 @@ test('expired session shows a recoverable message and never sends a blind write'
     assert.equal(h.calls[1].url, '/status');
     await h.respond(1, null, 401);
     assert.match(h.elements.message.textContent, /Sesi telah berakhir/);
+    assert.equal(h.elements.action.disabled, false);
+});
+
+test('missing Bootstrap offers reload instead of leaving initial loading state', () => {
+    const h = setup({missingBootstrap: true});
+    assert.equal(h.elements.action.textContent, 'Muat ulang absensi');
+    assert.equal(h.elements.action.disabled, false);
+    assert.equal(h.calls.length, 0);
+});
+test('missing modal offers reload instead of silently stopping', () => {
+    const h = setup({missingModal: true});
+    assert.equal(h.elements.action.textContent, 'Muat ulang absensi');
     assert.equal(h.elements.action.disabled, false);
 });
