@@ -135,4 +135,31 @@ class CashierReportQrisTest extends TestCase
         $this->assertSame(20000.0, $this->report()['qrisTotal']);
     }
 
+    public function test_cashier_page_shows_own_daily_qris_for_the_active_shift(): void
+    {
+        DB::statement('CREATE TABLE tb_stores (id INTEGER PRIMARY KEY, store_name TEXT, deleted_at TEXT)');
+        DB::statement('CREATE TABLE tb_customers (id INTEGER PRIMARY KEY, store_id INTEGER, deleted_at TEXT)');
+        DB::table('tb_stores')->insert(['id' => 1, 'store_name' => 'Toko']);
+        DB::table('attendances')->insert(['user_id' => 'cashier', 'store_id' => 1,
+            'checked_in_at' => '2026-10-25 10:00:00', 'checked_out_at' => null]);
+        $this->sale(1, overrides: ['date' => '2026-10-26', 'created_at' => '2026-10-25 17:15:00']);
+        $this->sale(2, overrides: ['created_by' => 'other']);
+        $this->sale(3, 'cash');
+        $this->actingAs(User::findOrFail('cashier'));
+        \Carbon\Carbon::setTestNow(\Carbon\Carbon::parse('2026-10-26 00:30:00', 'Asia/Jakarta'));
+        try {
+            $request = Request::create('/sales');
+            $request->setUserResolver(fn () => auth()->user());
+            $data = app(\App\Http\Controllers\TbSalesController::class)->index($request)->getData();
+            $this->assertSame(20000.0, $data['cashierQrisTotal'] ?? null);
+            $this->assertSame('2026-10-25', $data['cashierQrisDate'] ?? null);
+            DB::table('attendances')->update(['checked_out_at' => '2026-10-25 17:20:00']);
+            $data = app(\App\Http\Controllers\TbSalesController::class)->index($request)->getData();
+            $this->assertSame('2026-10-26', $data['cashierQrisDate']);
+            $this->assertSame(0.0, $data['cashierQrisTotal']);
+        } finally {
+            \Carbon\Carbon::setTestNow();
+        }
+    }
+
 }

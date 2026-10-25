@@ -173,10 +173,35 @@ class StockThresholdController extends Controller
 
         if (!$storeId) return back()->with('error', 'Store wajib dipilih.');
 
-        $items = $request->input('items', []);
+        $request->validate([
+            'items_payload' => 'nullable|json',
+            'expected_count' => 'nullable|integer|min:0',
+        ]);
+        $items = $request->filled('items_payload')
+            ? json_decode($request->input('items_payload'), true)
+            : $request->input('items', []);
+        if (!is_array($items)) {
+            return back()->withInput()->with('error', 'Data Min/Max tidak valid. Silakan simpan ulang.');
+        }
+        $request->merge(['items' => $items]);
+        $request->validate([
+            'items' => 'array',
+            'items.*' => 'array',
+            'items.*.min_stock' => 'nullable|integer|min:0|max:2147483647',
+            'items.*.max_stock' => 'nullable|integer|min:0|max:2147483647',
+        ]);
         $expectedCount = (int) $request->input('expected_count', 0);
-        if ($expectedCount > 0 && count($items) < $expectedCount) {
-            return back()->with('error', 'Koneksi tidak stabil. Data yang diterima tidak lengkap, silakan simpan ulang.');
+        if ($expectedCount > 0 && count($items) !== $expectedCount) {
+            return back()->withInput()->with('error', 'Data yang diterima tidak lengkap, silakan simpan ulang.');
+        }
+        if (empty($items)) {
+            return back()->with('warning', 'Belum ada perubahan Min/Max untuk disimpan.');
+        }
+        foreach ($items as $id => $row) {
+            if (!ctype_digit((string) $id) || (int) $id <= 0
+                || (!array_key_exists('min_stock', $row) && !array_key_exists('max_stock', $row))) {
+                return back()->withInput()->with('error', 'Data produk Min/Max tidak valid.');
+            }
         }
 
         $productIds = collect(array_keys($items))
@@ -189,7 +214,7 @@ class StockThresholdController extends Controller
             ->where('is_active', 1)
             ->count();
         if ($activeProductCount !== $productIds->count()) {
-            return back()->with('error', 'Threshold hanya dapat diatur untuk produk aktif.');
+            return back()->withInput()->with('error', 'Threshold hanya dapat diatur untuk produk aktif.');
         }
 
         DB::beginTransaction();
@@ -255,7 +280,7 @@ class StockThresholdController extends Controller
             return back()->with('success', 'Batas stok berhasil disimpan.');
         } catch (\Throwable $e) {
             DB::rollBack();
-            return back()->with('error', $e->getMessage());
+            return back()->withInput()->with('error', $e->getMessage());
         }
     }
 

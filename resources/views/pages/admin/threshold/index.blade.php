@@ -46,6 +46,11 @@
         @csrf
         <input type="hidden" name="store_id" value="{{ $storeId }}">
         <input type="hidden" name="expected_count" value="0">
+        <input type="hidden" name="items_payload" id="threshold-items-payload" value="">
+        <div id="threshold-message" class="text-warning mb-2" role="status" aria-live="polite"></div>
+        @if($errors->any())
+          <div class="alert alert-danger">{{ $errors->first() }}</div>
+        @endif
         <div class="card">
           <div class="card-body">
             <div class="table-responsive">
@@ -68,10 +73,10 @@
                       <td>{{ $row->stock_system }}</td>
                       <td class="text-end">{{ number_format((float)($row->avg_daily_sales ?? 0), 0, ',', '.') }}</td>
                       <td style="max-width:150px">
-                        <input type="number" min="0" class="form-control" name="items[{{ $row->id }}][min_stock]" value="{{ $row->min_stock }}">
+                        <input type="number" min="0" class="form-control" name="items[{{ $row->id }}][min_stock]" value="{{ old("items.$row->id.min_stock", $row->min_stock) }}" data-original="{{ $row->min_stock }}">
                       </td>
                       <td style="max-width:150px">
-                        <input type="number" min="0" class="form-control" name="items[{{ $row->id }}][max_stock]" value="{{ $row->max_stock }}">
+                        <input type="number" min="0" class="form-control" name="items[{{ $row->id }}][max_stock]" value="{{ old("items.$row->id.max_stock", $row->max_stock) }}" data-original="{{ $row->max_stock }}">
                       </td>
                     </tr>
                   @endforeach
@@ -101,6 +106,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const form = document.getElementById('threshold-form');
   const submitButton = document.getElementById('threshold-submit');
   const expectedCountInput = form ? form.querySelector('input[name="expected_count"]') : null;
+  const payloadInput = document.getElementById('threshold-items-payload');
+  const message = document.getElementById('threshold-message');
   let isSubmitting = false;
   if (!searchInput || !body) return;
 
@@ -167,28 +174,41 @@ document.addEventListener('DOMContentLoaded', () => {
   filter(searchInput.value);
   searchInput.focus();
 
+  window.addEventListener('pageshow', (event) => {
+    if (!event.persisted) return;
+    isSubmitting = false;
+    rows.forEach(tr => {
+      tr.querySelectorAll('input[type="number"]').forEach(input => { input.disabled = false; });
+    });
+    setButtonBusy(submitButton, false);
+  });
+
   if (form && submitButton) {
     form.addEventListener('submit', (e) => {
       if (isSubmitting) {
         e.preventDefault();
         return;
       }
-      if (expectedCountInput) expectedCountInput.value = String(dirtyIds.size);
+      // Re-read actual values: browser autofill/history may not emit input.
+      rows.forEach(updateRowDirty);
       if (dirtyIds.size === 0) {
-        rows.forEach(tr => {
-          tr.querySelectorAll('input[type="number"]').forEach(input => {
-            input.disabled = true;
-          });
-        });
-      } else {
-        rows.forEach(tr => {
-          if (!dirtyIds.has(tr.dataset.id)) {
-            tr.querySelectorAll('input[type="number"]').forEach(input => {
-              input.disabled = true;
-            });
-          }
-        });
+        e.preventDefault();
+        if (message) message.textContent = 'Belum ada perubahan Min/Max untuk disimpan.';
+        return;
       }
+      if (message) message.textContent = '';
+      const items = {};
+      rows.forEach(tr => {
+        if (!dirtyIds.has(tr.dataset.id)) return;
+        const inputs = tr.querySelectorAll('input[type="number"]');
+        items[tr.dataset.id] = {min_stock: inputs[0].value, max_stock: inputs[1].value};
+      });
+      if (expectedCountInput) expectedCountInput.value = String(Object.keys(items).length);
+      // One JSON field prevents PHP max_input_vars from truncating large edits.
+      payloadInput.value = JSON.stringify(items);
+      rows.forEach(tr => {
+        tr.querySelectorAll('input[type="number"]').forEach(input => { input.disabled = true; });
+      });
       isSubmitting = true;
       setButtonBusy(submitButton, true);
     });

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\tb_customers;
 use App\Models\tb_outgoing_goods;
 use App\Support\StockLedger;
+use App\Support\CashierSales;
 use App\Models\tb_products;
 use App\Models\tb_sell;
 use App\Models\tb_stores;
@@ -54,12 +55,17 @@ class TbSalesController extends Controller
 
         $stores = store_access_list($user);
 
+        $qrisDate = CashierSales::currentDate((string) $user->id, $store_id);
+        $qrisTotal = CashierSales::qrisTotal((string) $user->id, trim($user->name), $store_id, $qrisDate);
+
         return view('pages.admin.sales.index', [
             'user' => $user,
             'invoice_number' => $invoce_number,
             'customers' => $customers,
             'stores' => $stores,
             'selectedStoreId' => $store_id,
+            'cashierQrisTotal' => $qrisTotal,
+            'cashierQrisDate' => $qrisDate,
         ]);
     }
 

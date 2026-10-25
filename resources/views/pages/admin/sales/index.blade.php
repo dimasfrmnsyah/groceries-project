@@ -62,6 +62,19 @@
                 <div class="card-body">
                     <div class="row mb-3">
                         <div class="col-lg-5 col-md-8">
+                            <div class="border rounded bg-light p-3 mb-3" id="cashier-qris-summary">
+                                <div class="d-flex justify-content-between align-items-center gap-2">
+                                    <span class="fw-semibold">Total QRIS Saya</span>
+                                    <strong class="text-success fs-5">
+                                        @if($cashierQrisTotal !== null)
+                                            Rp {{ number_format($cashierQrisTotal, 0, ',', '.') }}
+                                        @else
+                                            Belum tersedia
+                                        @endif
+                                    </strong>
+                                </div>
+                                <small class="text-muted">{{ Auth::user()->name }} · {{ \Carbon\Carbon::parse($cashierQrisDate)->format('d M Y') }} · Tanggal mulai shift</small>
+                            </div>
                             <div class="d-flex align-items-center gap-2 mb-2">
                                 <label for="transaction_number" style="width:24%">
                                     No. Transaksi:
