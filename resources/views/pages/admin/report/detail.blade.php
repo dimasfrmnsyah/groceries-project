@@ -15,11 +15,23 @@
       <div><strong>Kasir:</strong> {{ $cashier }}</div>
       <div><strong>Tanggal:</strong> {{ \Carbon\Carbon::parse($revenue->date)->format('d M Y') }}</div>
       <div><strong>Total (Daily):</strong> Rp {{ number_format($revenue->amount, 0, ',', '.') }}</div>
-      <div><strong>QR:</strong> Rp {{ number_format((float) ($revenue->qr ?? 0), 0, ',', '.') }}</div>
+      <div><strong>QRIS Penjualan:</strong>
+        @if($qrisTotal !== null)
+          Rp {{ number_format($qrisTotal, 0, ',', '.') }}
+        @else
+          <span class="text-muted">Belum tersedia</span>
+        @endif
+      </div>
+      <div><strong>QR Input Logout:</strong> Rp {{ number_format((float) ($revenue->qr ?? 0), 0, ',', '.') }}</div>
       <div><strong>Pengeluaran:</strong> Rp {{ number_format((float) ($revenue->pengeluaran ?? 0), 0, ',', '.') }}</div>
     </div>
   </div>
 </div>
+<p class="text-muted small">
+  QRIS Penjualan dihitung dari nota berbayar QRIS pada tanggal laporan, mengikuti tanggal mulai shift jika ada absensi.
+  QR Input Logout adalah nominal yang diisi kasir saat logout.
+  Transaksi lama tanpa penanda QRIS belum dapat dihitung otomatis.
+</p>
 
 @php
   $revenueDenominations = is_array($revenue->denominations ?? null)

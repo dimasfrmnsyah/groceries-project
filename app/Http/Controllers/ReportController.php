@@ -10,6 +10,7 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use App\Support\StockLedger;
+use App\Support\SalesReportDate;
 class ReportController extends Controller
 {
     public function index(Request $request)
@@ -283,13 +284,24 @@ class ReportController extends Controller
         $select[] = 'pengeluaran';
     }
 
-    $revenue = tb_daily_revenues::with('user:id,name')
+    $revenue = tb_daily_revenues::with('user:id,name,store_id')
         ->select($select)
         ->findOrFail($id);
+
+    $qrisTotal = null;
+    if (schemaHasColumn('tb_sells', 'payment_method')) {
+        // Sum invoices once, even when a QRIS sale has several outgoing items.
+        $qrisSales = $this->revenueSalesQuery($revenue)
+            ->where('s.payment_method', 'qris')
+            ->select('s.id', 's.total_price')
+            ->distinct();
+        $qrisTotal = (float) DB::query()->fromSub($qrisSales, 'qris_sales')->sum('total_price');
+    }
 
     return view('pages.admin.report.detail', [
         'revenue' => $revenue,
         'cashier' => optional($revenue->user)->name ?? '-',
+        'qrisTotal' => $qrisTotal,
     ]);
 }
 
@@ -304,52 +316,8 @@ public function detailData(Request $request, $id)
         ->select($select)
         ->findOrFail($id);
 
-    $filterDate  = \Carbon\Carbon::parse($revenue->date)->toDateString();
-    $cashierName = trim(optional($revenue->user)->name ?? '');
-    $storeId     = schemaHasColumn('daily_revenues','store_id') ? $revenue->store_id : optional($revenue->user)->store_id;
-
-    $hasSellerIdColumn = schemaHasColumn('tb_sells', 'seller_id');
-    $hasInvoiceColumn = schemaHasColumn('tb_sells', 'no_invoice');
-    $hasSellCreatedByColumn = schemaHasColumn('tb_sells', 'created_by');
-    $hasOutgoingCreatedByColumn = schemaHasColumn('tb_outgoing_goods', 'created_by');
-
-    $query = tb_outgoing_goods::query()
-        ->join('tb_sells as s', 's.id', '=', 'tb_outgoing_goods.sell_id')
-        ->select('tb_outgoing_goods.id','tb_outgoing_goods.uuid','tb_outgoing_goods.product_id','tb_outgoing_goods.sell_id','tb_outgoing_goods.date','tb_outgoing_goods.quantity_out','tb_outgoing_goods.discount','tb_outgoing_goods.recorded_by','tb_outgoing_goods.description','tb_outgoing_goods.created_at')
-        ->whereDate('tb_outgoing_goods.date', $filterDate)
-        ->whereBetween('tb_outgoing_goods.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
-        ->when(schemaHasColumn('tb_sells', 'deleted_at'), fn ($q) => $q->whereNull('s.deleted_at'))
-        ->when(schemaHasColumn('tb_outgoing_goods', 'store_id') && $storeId, function ($q) use ($storeId) {
-            $q->where(function ($scope) use ($storeId) {
-                $scope->where('tb_outgoing_goods.store_id', $storeId)
-                    ->orWhere(function ($legacy) use ($storeId) {
-                        $legacy->whereNull('tb_outgoing_goods.store_id')
-                            ->where('s.store_id', $storeId);
-                    });
-            });
-        })
-        ->when(!schemaHasColumn('tb_outgoing_goods', 'store_id') && $storeId, fn($q) => $q->where('s.store_id', $storeId))
-        ->when($cashierName !== '', function ($q) use ($cashierName, $revenue, $hasSellCreatedByColumn, $hasOutgoingCreatedByColumn) {
-            $q->where(function ($identity) use ($cashierName, $revenue, $hasSellCreatedByColumn, $hasOutgoingCreatedByColumn) {
-                $identity->whereRaw('LOWER(TRIM(COALESCE(tb_outgoing_goods.recorded_by, ""))) = ?', [strtolower($cashierName)]);
-                if ($hasOutgoingCreatedByColumn) {
-                    $identity->orWhere('tb_outgoing_goods.created_by', $revenue->user_id);
-                }
-                if ($hasSellCreatedByColumn) {
-                    $identity->orWhere('s.created_by', $revenue->user_id);
-                }
-            });
-        })
-        ->when($hasSellerIdColumn, fn ($q) => $q->where(fn ($scope) => $scope->whereNull('s.seller_id')->orWhere('s.seller_id', '!=', 1)))
-        ->when($hasInvoiceColumn, function ($q) {
-            $q->where(function ($scope) {
-                $scope->whereNull('s.no_invoice')->orWhere(function ($invoice) {
-                    $invoice->where('s.no_invoice', 'not like', 'SO-ADJ-%')
-                        ->where('s.no_invoice', 'not like', 'AR-%')
-                        ->where('s.no_invoice', 'not like', 'TRF-%');
-                });
-            });
-        });
+    $query = $this->revenueSalesQuery($revenue)
+        ->select('tb_outgoing_goods.id','tb_outgoing_goods.uuid','tb_outgoing_goods.product_id','tb_outgoing_goods.sell_id','tb_outgoing_goods.date','tb_outgoing_goods.quantity_out','tb_outgoing_goods.discount','tb_outgoing_goods.recorded_by','tb_outgoing_goods.description','tb_outgoing_goods.created_at');
 
     if (method_exists(\App\Models\tb_outgoing_goods::class, 'product')) {
         $query->with('product:id,product_name as name,selling_price as price');
@@ -367,6 +335,63 @@ public function detailData(Request $request, $id)
         })
         ->toJson();
 }
+private function revenueSalesQuery(tb_daily_revenues $revenue): \Illuminate\Database\Eloquent\Builder
+{
+    $filterDate  = \Carbon\Carbon::parse($revenue->date)->toDateString();
+    $cashierName = trim(optional($revenue->user)->name ?? '');
+    $storeId = $revenue->store_id ?: optional($revenue->user)->store_id;
+
+    $hasSellerIdColumn = schemaHasColumn('tb_sells', 'seller_id');
+    $hasInvoiceColumn = schemaHasColumn('tb_sells', 'no_invoice');
+    $hasSellCreatedByColumn = schemaHasColumn('tb_sells', 'created_by');
+    $hasOutgoingCreatedByColumn = schemaHasColumn('tb_outgoing_goods', 'created_by');
+
+    return tb_outgoing_goods::query()
+        ->joinSub(SalesReportDate::query(), 's', 's.id', '=', 'tb_outgoing_goods.sell_id')
+        ->where('s.report_date', $filterDate)
+        ->whereBetween('tb_outgoing_goods.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
+        ->when(schemaHasColumn('tb_sells', 'deleted_at'), fn ($q) => $q->whereNull('s.deleted_at'))
+        ->where('s.store_id', $storeId ?: 0)
+        ->where(function ($identity) use ($cashierName, $revenue, $hasSellCreatedByColumn, $hasOutgoingCreatedByColumn) {
+            // Names are a legacy fallback only. A known different user ID wins.
+            $matchMovement = function ($movement) use ($cashierName, $revenue, $hasOutgoingCreatedByColumn) {
+                $matchName = function ($name) use ($cashierName) {
+                    $name->whereRaw('LOWER(TRIM(COALESCE(tb_outgoing_goods.recorded_by, ""))) = ?', [strtolower($cashierName)])
+                        ->whereRaw('? <> ?', [$cashierName, '']);
+                };
+                if ($hasOutgoingCreatedByColumn) {
+                    $movement->where('tb_outgoing_goods.created_by', $revenue->user_id)
+                        ->orWhere(function ($legacy) use ($matchName) {
+                            $legacy->whereRaw("NULLIF(TRIM(tb_outgoing_goods.created_by), '') IS NULL")
+                                ->where($matchName);
+                        });
+                } else {
+                    $movement->where($matchName);
+                }
+            };
+            if ($hasSellCreatedByColumn) {
+                $identity->where('s.created_by', $revenue->user_id)
+                    ->orWhere(function ($legacy) use ($matchMovement) {
+                        $legacy->whereRaw("NULLIF(TRIM(s.created_by), '') IS NULL")
+                            ->where($matchMovement);
+                    });
+            } else {
+                $identity->where($matchMovement);
+            }
+        })
+        ->when($hasSellerIdColumn, fn ($q) => $q->where(fn ($scope) => $scope->whereNull('s.seller_id')->orWhere('s.seller_id', '!=', 1)))
+        ->when($hasInvoiceColumn, function ($q) {
+            $q->where(function ($scope) {
+                $scope->whereNull('s.no_invoice')->orWhere(function ($invoice) {
+                    $invoice->where('s.no_invoice', 'not like', 'SO-ADJ-%')
+                        ->where('s.no_invoice', 'not like', 'AR-%')
+                        ->where('s.no_invoice', 'not like', 'TRF-%');
+                });
+            });
+        });
+
+}
+
 private function normalizeName(?string $name): string
 {
     $n = mb_strtolower(trim((string) $name), 'UTF-8');
