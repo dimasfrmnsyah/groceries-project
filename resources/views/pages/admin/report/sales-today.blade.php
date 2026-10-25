@@ -5,6 +5,10 @@
 @endsection
 
 @section('content')
+<div class="alert alert-info">
+    Tanggal penjualan mengikuti tanggal Absen Masuk (WIB), termasuk transaksi setelah tengah malam dalam shift yang sama.
+    Transaksi tanpa catatan shift memakai tanggal transaksi.
+</div>
 <div class="page-breadcrumb d-none d-sm-flex align-items-center mb-3">
     <div class="breadcrumb-title pe-3">Penjualan Harian</div>
 </div>

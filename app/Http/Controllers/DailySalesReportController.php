@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\tb_outgoing_goods;
 use App\Support\StockLedger;
+use App\Support\SalesReportDate;
 use App\Models\tb_sell;
 use App\Models\tb_stores;
 use App\Models\tb_types;
@@ -91,7 +92,7 @@ class DailySalesReportController extends Controller
                 st.store_name,
                 s.store_id,
                 tb_outgoing_goods.recorded_by,
-                DATE(s.date) as activity_date,
+                DATE(s.report_date) as activity_date,
                 MAX(COALESCE(tb_outgoing_goods.created_at, s.created_at)) as latest_activity,
                 SUM(tb_outgoing_goods.quantity_out) as quantity_out,
                 SUM(tb_outgoing_goods.discount) as discount,
@@ -108,14 +109,14 @@ class DailySalesReportController extends Controller
                 'st.store_name',
                 's.store_id',
                 'tb_outgoing_goods.recorded_by',
-                DB::raw('DATE(s.date)'),
+                DB::raw('DATE(s.report_date)'),
                 'p.selling_price',
                 'p.purchase_price'
             );
 
         $summaryRows = (clone $baseQuery)->get();
         $salesTotalQuery = tb_outgoing_goods::query()
-            ->join('tb_sells as s', 's.id', '=', 'tb_outgoing_goods.sell_id')
+            ->joinSub(SalesReportDate::query(), 's', 's.id', '=', 'tb_outgoing_goods.sell_id')
             ->when(
                 Schema::hasColumn('tb_sells', 'deleted_at'),
                 fn ($q) => $q->whereNull('s.deleted_at')
@@ -141,7 +142,7 @@ class DailySalesReportController extends Controller
                 Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock') && $sourceMode !== 'all',
                 fn ($q) => $q->where('tb_outgoing_goods.is_pending_stock', $sourceMode === 'offline' ? 1 : 0)
             )
-            ->whereBetween('s.date', [$startDate->copy()->startOfDay(), $endDate->copy()->endOfDay()])
+            ->whereBetween('s.report_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->when(
                 $cashier && Schema::hasColumn('tb_outgoing_goods', 'recorded_by'),
                 fn ($q) => $q->where('tb_outgoing_goods.recorded_by', $cashier)
@@ -236,7 +237,7 @@ class DailySalesReportController extends Controller
             return $this->exportProductType($filteredQuery, $startDate, $endDate);
         }
 
-        $activityField = 's.date';
+        $activityField = 's.report_date';
         $select = [
             'tb_outgoing_goods.id',
             's.id as sell_id',
@@ -259,7 +260,7 @@ class DailySalesReportController extends Controller
         }
 
         $rows = tb_outgoing_goods::query()
-            ->join('tb_sells as s', 's.id', '=', 'tb_outgoing_goods.sell_id')
+            ->joinSub(SalesReportDate::query(), 's', 's.id', '=', 'tb_outgoing_goods.sell_id')
             ->leftJoin('tb_products as p', 'p.id', '=', 'tb_outgoing_goods.product_id')
             ->leftJoin('tb_stores as st', 'st.id', '=', 's.store_id')
             ->leftJoin('tb_customers as c', 'c.id', '=', 's.customer_id')
@@ -295,7 +296,7 @@ class DailySalesReportController extends Controller
             )
             ->whereBetween(
                 DB::raw($activityField),
-                [$startDate->copy()->startOfDay(), $endDate->copy()->endOfDay()]
+                [$startDate->toDateString(), $endDate->toDateString()]
             )
             ->when(
                 $cashier && Schema::hasColumn('tb_outgoing_goods', 'recorded_by'),
@@ -358,7 +359,7 @@ class DailySalesReportController extends Controller
         ?int $typeId = null
     ) {
         return tb_outgoing_goods::query()
-            ->join('tb_sells as s', 's.id', '=', 'tb_outgoing_goods.sell_id')
+            ->joinSub(SalesReportDate::query(), 's', 's.id', '=', 'tb_outgoing_goods.sell_id')
             ->leftJoin('tb_products as p', 'p.id', '=', 'tb_outgoing_goods.product_id')
             ->leftJoin('tb_types as t', 't.id', '=', 'p.type_id')
             ->leftJoin('tb_stores as st', 'st.id', '=', 's.store_id')
@@ -390,7 +391,7 @@ class DailySalesReportController extends Controller
                 Schema::hasColumn('tb_outgoing_goods', 'is_pending_stock') && $sourceMode !== 'all',
                 fn ($q) => $q->where('tb_outgoing_goods.is_pending_stock', $sourceMode === 'offline' ? 1 : 0)
             )
-            ->whereBetween('s.date', [$startDate->copy()->startOfDay(), $endDate->copy()->endOfDay()])
+            ->whereBetween('s.report_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->when(
                 $cashier && Schema::hasColumn('tb_outgoing_goods', 'recorded_by'),
                 fn ($q) => $q->where('tb_outgoing_goods.recorded_by', $cashier)
@@ -554,7 +555,7 @@ class DailySalesReportController extends Controller
         $end   = Carbon::createFromFormat('Y-m-d', $endDate, 'Asia/Jakarta')->endOfDay();
 
         return tb_outgoing_goods::query()
-            ->join('tb_sells as s', 's.id', '=', 'tb_outgoing_goods.sell_id')
+            ->joinSub(SalesReportDate::query(), 's', 's.id', '=', 'tb_outgoing_goods.sell_id')
             ->select('tb_outgoing_goods.recorded_by')
             ->when(
                 Schema::hasColumn('tb_sells', 'deleted_at'),
@@ -569,7 +570,7 @@ class DailySalesReportController extends Controller
             ->whereBetween('tb_outgoing_goods.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
             ->whereNotNull('recorded_by')
             ->where(function ($query) use ($start, $end) {
-                $query->whereBetween('s.date', [$start, $end]);
+                $query->whereBetween('s.report_date', [$start->toDateString(), $end->toDateString()]);
             })
             ->groupBy('recorded_by')
             ->orderBy('recorded_by')

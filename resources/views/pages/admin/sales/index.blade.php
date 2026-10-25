@@ -277,6 +277,16 @@
                     0
                 </div>
             </div>
+            <fieldset class="mb-3">
+                <legend class="fs-6">Metode pembayaran</legend>
+                <div class="btn-group" role="group" aria-label="Metode pembayaran">
+                    <input type="radio" class="btn-check" name="payment-method" id="payment-cash" value="cash" checked onchange="selectPaymentMethod('cash')">
+                    <label class="btn btn-outline-primary" for="payment-cash">Cash / Tunai (F8)</label>
+                    <input type="radio" class="btn-check" name="payment-method" id="payment-qris" value="qris" onchange="selectPaymentMethod('qris')">
+                    <label class="btn btn-outline-primary" for="payment-qris">QRIS (F9)</label>
+                </div>
+                <p id="qris-payment-note" class="text-muted mt-2 mb-0 d-none">Pastikan pembayaran QRIS sudah diterima sebelum menekan Bayar.</p>
+            </fieldset>
             <div class="d-flex mb-5 align-items-center">
                 <div style="width: 20%">Tunai:</div>
                 <div style="width: 40%">
@@ -539,6 +549,7 @@
         }
 
         $(document).on('keydown', function(e) {
+            if ($('#payment-modal').hasClass('show')) return;
             const formTransaction = $('.form-transaction');
             const currentFormTransaction = $(':focus').closest('.form-transaction');
             const index = formTransaction.index(currentFormTransaction);
@@ -630,6 +641,12 @@
         })
 
         $('#payment-modal').on('keydown', function(e) {
+                if (e.key === 'F8' || e.key === 'F9') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!e.repeat) selectPaymentMethod(e.key === 'F8' ? 'cash' : 'qris');
+                    return;
+                }
                 if(e.key === 'F12') {
                     e.preventDefault();
                     onPaymentPrint();
@@ -697,6 +714,7 @@
 
         // Modal payment open
         const onClickModalPayment = () => {
+            if (isPaying || $('#payment-modal').hasClass('show')) return;
             let elTotalPrice2 = $('#total-price2');
             elTotalPrice2.html(formatRupiah(formData.total_price ?? 0));
             var myModal = new bootstrap.Modal(document.getElementById('payment-modal'));
@@ -706,9 +724,21 @@
             let elLack = $('#lack');
             elLack.html(formatRupiah(0));
             $('#lack').val(0);
+            selectPaymentMethod('cash', false);
             myModal.show();
         }
 
+
+        const selectPaymentMethod = (method, focus = true) => {
+            if (isPaying) return;
+            formData.payment_method = method;
+            const isQris = method === 'qris';
+            $('#payment-' + method).prop('checked', true);
+            $('#qris-payment-note').toggleClass('d-none', !isQris);
+            $('#customer-money').prop('disabled', isQris).val(isQris ? formData.total_price : 0);
+            customerMoney(isQris ? formData.total_price : 0);
+            if (focus) $(isQris ? '#payment-qris' : '#customer-money').trigger('focus');
+        };
 
         const customerMoney = (value) => {
             formData.customer_money = 0
@@ -941,6 +971,8 @@
         let isPaying = false;
         const setPaymentBusy = (busy) => {
             isPaying = busy;
+            $('input[name="payment-method"]').prop('disabled', busy);
+            $('#customer-money').prop('disabled', busy || formData.payment_method === 'qris');
             document.querySelectorAll('#btn-payment-print, #btn-payment').forEach((button) => {
                 if (window.AppLoading) {
                     if (busy) {
@@ -1075,6 +1107,7 @@
                                     `).join('')}
                                         <hr>
                                         <div>Total: ${formatRupiah(formData.total_price)}</div>
+                                        <div>Metode: ${formData.payment_method === 'qris' ? 'QRIS' : 'Cash'}</div>
                                         <div>Bayar: ${formatRupiah(formData.customer_money)}</div>
                                         <div>Kembali: ${formatRupiah(parseInt(formData.customer_money) - parseInt(formData.total_price))}</div>
                                         <hr>

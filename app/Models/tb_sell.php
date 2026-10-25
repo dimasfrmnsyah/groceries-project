@@ -18,6 +18,7 @@ class tb_sell extends Model
         'created_by',
         'idempotency_key',
         'payment_amount',
+        'payment_method',
         'customer_id',
         'iiod'
     ];

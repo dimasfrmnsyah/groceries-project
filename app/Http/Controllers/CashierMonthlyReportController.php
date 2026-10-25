@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Yajra\DataTables\Facades\DataTables;
 use App\Support\StockLedger;
+use App\Support\SalesReportDate;
 
 class CashierMonthlyReportController extends Controller
 {
@@ -79,12 +80,12 @@ class CashierMonthlyReportController extends Controller
             }
         };
 
-        $dateExpr = 'COALESCE(og.date, s.date, og.created_at, s.created_at)';
+        $dateExpr = 's.report_date';
         $monthExpr = "DATE_FORMAT($dateExpr, '%Y-%m')";
         $cashierKeyExpr = "LOWER(TRIM(og.recorded_by))";
         $targetMonths = array_values(array_unique([$monthFrom, $monthTo]));
 
-        $salesBase = DB::table('tb_sells as s')
+        $salesBase = DB::query()->fromSub(SalesReportDate::query(), 's')
             ->join('tb_outgoing_goods as og', 'og.sell_id', '=', 's.id')
             ->when(
                 Schema::hasColumn('tb_outgoing_goods', 'deleted_at'),
@@ -96,7 +97,7 @@ class CashierMonthlyReportController extends Controller
             )
             ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId))
             ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
-            ->whereBetween(DB::raw($dateExpr), [$startDate->startOfDay(), $endDate->endOfDay()])
+            ->whereBetween(DB::raw($dateExpr), [$startDate->toDateString(), $endDate->toDateString()])
             ->whereIn(DB::raw($monthExpr), $targetMonths)
             ->whereNotNull('og.recorded_by')
             ->whereRaw('COALESCE(TRIM(og.recorded_by), "") <> ""')
@@ -230,10 +231,10 @@ class CashierMonthlyReportController extends Controller
             }
         };
 
-        $dateExpr = 'COALESCE(og.date, s.date, og.created_at, s.created_at)';
+        $dateExpr = 's.report_date';
         $invoiceSelect = $hasInvoiceColumn ? 's.no_invoice' : 'NULL as no_invoice';
 
-        $query = DB::table('tb_sells as s')
+        $query = DB::query()->fromSub(SalesReportDate::query(), 's')
             ->join('tb_outgoing_goods as og', 'og.sell_id', '=', 's.id')
             ->leftJoin('tb_stores as st', 'st.id', '=', 's.store_id')
             ->when(
@@ -246,7 +247,7 @@ class CashierMonthlyReportController extends Controller
             )
             ->when($storeId, fn ($q) => $q->where('s.store_id', $storeId))
             ->whereBetween('og.quantity_out', [0, StockLedger::MAX_MOVEMENT_QUANTITY])
-            ->whereBetween(DB::raw($dateExpr), [$startDate->startOfDay(), $endDate->endOfDay()])
+            ->whereBetween(DB::raw($dateExpr), [$startDate->toDateString(), $endDate->toDateString()])
             ->whereRaw('LOWER(TRIM(og.recorded_by)) = ?', [$cashierKey])
             ->selectRaw("
                 s.id as sell_id,

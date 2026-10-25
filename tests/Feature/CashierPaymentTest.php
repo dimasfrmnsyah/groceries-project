@@ -28,7 +28,7 @@ class CashierPaymentTest extends TestCase
             'CREATE TABLE tb_product_store_prices (id INTEGER PRIMARY KEY, product_id INTEGER, store_id INTEGER)',
             'CREATE TABLE tb_purchases (id INTEGER PRIMARY KEY, store_id INTEGER)',
             'CREATE TABLE tb_incoming_goods (id INTEGER PRIMARY KEY, purchase_id INTEGER, product_id INTEGER, stock INTEGER)',
-            'CREATE TABLE tb_sells (id INTEGER PRIMARY KEY, no_invoice TEXT, store_id INTEGER, created_by INTEGER, idempotency_key TEXT UNIQUE, date TEXT, total_price NUMERIC, payment_amount NUMERIC, customer_id INTEGER, uuid TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT)',
+            'CREATE TABLE tb_sells (id INTEGER PRIMARY KEY, no_invoice TEXT, store_id INTEGER, created_by INTEGER, idempotency_key TEXT UNIQUE, date TEXT, total_price NUMERIC, payment_amount NUMERIC, payment_method TEXT, customer_id INTEGER, uuid TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT)',
             'CREATE TABLE tb_outgoing_goods (id INTEGER PRIMARY KEY, product_id INTEGER, sell_id INTEGER, store_id INTEGER, date TEXT, quantity_out INTEGER, discount NUMERIC, recorded_by TEXT, created_by INTEGER, source_type TEXT, is_pending_stock INTEGER, uuid TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT)',
         ] as $sql) {
             DB::statement($sql);
@@ -42,12 +42,13 @@ class CashierPaymentTest extends TestCase
         $this->actingAs($user);
     }
 
-    private function pay(string $key = 'payment-1', int $qty = 2): \Illuminate\Http\JsonResponse
+    private function pay(string $key = 'payment-1', int $qty = 2, ?string $method = null): \Illuminate\Http\JsonResponse
     {
         $request = Request::create('/sales', 'POST', ['data' => [
             'transaction_date' => '2026-09-24',
             'store_id' => 1,
             'customer_money' => 50000,
+            'payment_method' => $method,
             'idempotency_key' => $key,
             'products' => [['id' => 1, 'qty' => $qty]],
         ]]);
@@ -70,6 +71,27 @@ class CashierPaymentTest extends TestCase
         $this->assertSame(1, DB::table('tb_outgoing_goods')->count());
         $this->assertEquals(2, DB::table('tb_outgoing_goods')->sum('quantity_out'));
         $this->assertEquals(0, DB::table('tb_outgoing_goods')->value('is_pending_stock'));
+    }
+
+    public function test_qris_records_exact_total_and_method(): void
+    {
+        $response = $this->pay(method: 'qris');
+        $this->assertSame(200, $response->getStatusCode(), $response->getContent());
+        $this->assertSame('qris', DB::table('tb_sells')->value('payment_method'));
+        $this->assertEquals(20000, DB::table('tb_sells')->value('payment_amount'));
+    }
+
+    public function test_legacy_payment_defaults_to_cash(): void
+    {
+        $this->pay();
+        $this->assertSame('cash', DB::table('tb_sells')->value('payment_method'));
+        $this->assertEquals(50000, DB::table('tb_sells')->value('payment_amount'));
+    }
+
+    public function test_unknown_payment_method_is_rejected(): void
+    {
+        $this->assertSame(422, $this->pay(method: 'invalid')->getStatusCode());
+        $this->assertSame(0, DB::table('tb_sells')->count());
     }
 
     public function test_offline_payment_succeeds_on_first_attempt_with_pending_stock(): void

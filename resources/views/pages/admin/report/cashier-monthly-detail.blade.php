@@ -5,6 +5,10 @@
 @endsection
 
 @section('content')
+<div class="alert alert-info">
+    Tanggal penjualan mengikuti tanggal Absen Masuk (WIB), termasuk transaksi setelah tengah malam dalam shift yang sama.
+    Transaksi tanpa catatan shift memakai tanggal transaksi.
+</div>
 @php
   $sameMonth = ($monthFrom ?? '') === ($monthTo ?? '');
   $monthFromLabel = $monthFrom ? \Carbon\Carbon::createFromFormat('Y-m', $monthFrom)->format('M Y') : '-';

@@ -70,6 +70,7 @@ class TbSalesController extends Controller
         $validator = Validator::make($input, [
             'transaction_date' => 'required|date',
             'customer_money' => 'required|numeric|min:0',
+            'payment_method' => 'nullable|in:cash,qris',
             'customer_id' => 'nullable|integer',
             // Nullable untuk kompatibilitas browser kasir lama. Jika kosong,
             // server membentuk key legacy dari invoice/payload + user + toko.
@@ -192,7 +193,8 @@ class TbSalesController extends Controller
                     $totalPrice += $this->resolveSellingPrice($product, $store_id, (int) $qty) * (int) $qty;
                 }
 
-                $paymentAmount = (float) ($input['customer_money'] ?? 0);
+                $paymentMethod = $input['payment_method'] ?? 'cash';
+                $paymentAmount = $paymentMethod === 'qris' ? $totalPrice : (float) ($input['customer_money'] ?? 0);
                 if ($paymentAmount < $totalPrice) {
                     throw new \InvalidArgumentException('Uang pembayaran kurang dari total transaksi.');
                 }
@@ -205,6 +207,7 @@ class TbSalesController extends Controller
                     'date' => $input['transaction_date'],
                     'total_price' => $totalPrice,
                     'payment_amount' => $paymentAmount,
+                    'payment_method' => $paymentMethod,
                     'customer_id' => $customerId,
                 ]);
 
