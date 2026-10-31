@@ -184,9 +184,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   if (form && submitButton) {
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
+      // Keep the page and its edits until the current session token is available.
+      e.preventDefault();
       if (isSubmitting) {
-        e.preventDefault();
         return;
       }
       // Re-read actual values: browser autofill/history may not emit input.
@@ -211,6 +212,31 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       isSubmitting = true;
       setButtonBusy(submitButton, true);
+      try {
+        const response = await fetch("{{ route('inventory.refreshCsrf') }}", {
+          method: 'GET',
+          credentials: 'same-origin',
+          cache: 'no-store',
+          headers: {'Accept': 'application/json'},
+        });
+        if (response.status === 401 || response.status === 419 || response.redirected) {
+          throw new Error('Sesi telah berakhir. Silakan login kembali di tab lain, lalu klik Simpan lagi. Nilai Min/Max tetap tersedia di halaman ini.');
+        }
+        if (!response.ok) throw new Error('Gagal memeriksa sesi. Silakan coba Simpan lagi.');
+        const data = await response.json();
+        if (typeof data.token !== 'string' || !data.token.trim()) {
+          throw new Error('Gagal memperbarui token sesi. Silakan coba Simpan lagi.');
+        }
+        form.querySelector('input[name="_token"]').value = data.token;
+        form.submit();
+      } catch (error) {
+        isSubmitting = false;
+        rows.forEach(tr => {
+          tr.querySelectorAll('input[type="number"]').forEach(input => { input.disabled = false; });
+        });
+        setButtonBusy(submitButton, false);
+        if (message) message.textContent = error.message || 'Gagal memeriksa sesi. Silakan coba Simpan lagi.';
+      }
     });
   }
 });
