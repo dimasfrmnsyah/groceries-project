@@ -42,12 +42,15 @@
       @if(!$storeId)
         <div class="alert alert-info">Pilih toko untuk mengatur batas stok.</div>
       @else
-      <form method="POST" action="{{ route('stock-threshold.save') }}" id="threshold-form">
+      <form method="POST" action="{{ route('stock-threshold.save') }}" id="threshold-form"
+            data-store-id="{{ $storeId }}"
+            data-stock-url="{{ route('stock-threshold.index', ['store' => $storeId, 'q' => $search ?? '']) }}">
         @csrf
         <input type="hidden" name="store_id" value="{{ $storeId }}">
         <input type="hidden" name="expected_count" value="0">
         <input type="hidden" name="items_payload" id="threshold-items-payload" value="">
         <div id="threshold-message" class="text-warning mb-2" role="status" aria-live="polite"></div>
+        <div id="threshold-stock-status" class="text-muted small mb-2" role="status" aria-live="polite">Stok diperbarui otomatis setiap 30 detik.</div>
         @if($errors->any())
           <div class="alert alert-danger">{{ $errors->first() }}</div>
         @endif
@@ -59,7 +62,7 @@
                   <tr>
                     <th>Kode</th>
                     <th>Produk</th>
-                    <th>Stok</th>
+                    <th>Stok Sistem</th>
                     <th style="width:90px" class="text-end">Avg</th>
                     <th>Stok Min</th>
                     <th>Stok Max</th>
@@ -70,7 +73,7 @@
                     <tr data-id="{{ $row->id }}" data-name="{{ strtolower($row->product_name) }}" data-code="{{ strtolower($row->product_code) }}">
                       <td>{{ $row->product_code }}</td>
                       <td>{{ $row->product_name }}</td>
-                      <td>{{ $row->stock_system }}</td>
+                      <td data-stock-system>{{ $row->stock_system }}</td>
                       <td class="text-end">{{ number_format((float)($row->avg_daily_sales ?? 0), 0, ',', '.') }}</td>
                       <td style="max-width:150px">
                         <input type="number" min="0" class="form-control" name="items[{{ $row->id }}][min_stock]" value="{{ old("items.$row->id.min_stock", $row->min_stock) }}" data-original="{{ $row->min_stock }}">
@@ -239,6 +242,55 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+});
+</script>
+<script id="threshold-stock-refresh">
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.getElementById('threshold-form');
+  const body = document.getElementById('threshold-table-body');
+  const status = document.getElementById('threshold-stock-status');
+  if (!form || !body || !form.dataset.stockUrl) return;
+
+  const stockCells = new Map(Array.from(body.querySelectorAll('tr[data-id]'), row => [
+    row.dataset.id, row.querySelector('[data-stock-system]'),
+  ]));
+  let refreshing = false;
+
+  const refreshStock = async () => {
+    if (refreshing || document.hidden) return;
+    refreshing = true;
+    try {
+      const response = await fetch(form.dataset.stockUrl, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: {'Accept': 'application/json'},
+      });
+      if (!response.ok || response.redirected) throw new Error('Stock request failed');
+      const payload = await response.json();
+      if (String(payload.store_id) !== form.dataset.storeId || !Array.isArray(payload.rows)) {
+        throw new Error('Invalid stock response');
+      }
+      payload.rows.forEach(row => {
+        const cell = stockCells.get(String(row.id));
+        if (cell && Number.isFinite(row.stock_system)) {
+          cell.textContent = String(row.stock_system);
+        }
+      });
+      if (status) status.textContent = 'Stok terbaru sudah dimuat. Diperbarui otomatis setiap 30 detik.';
+    } catch (error) {
+      if (status) status.textContent = 'Pembaruan stok gagal. Angka yang tampil adalah data terakhir; akan dicoba kembali otomatis.';
+    } finally {
+      refreshing = false;
+    }
+  };
+
+  refreshStock();
+  window.setInterval(refreshStock, 30000);
+  window.addEventListener('focus', refreshStock);
+  document.addEventListener('visibilitychange', refreshStock);
+  window.addEventListener('pageshow', event => {
+    if (event.persisted) refreshStock();
+  });
 });
 </script>
 @endsection
