@@ -2,6 +2,10 @@
 
 @section('content')
 <style>
+  #order-stock-card[hidden] {
+    display: none;
+  }
+
   .order-stock-table .po-cell {
     min-width: 140px;
   }
@@ -48,14 +52,16 @@
 
       @if(!$selected)
         <div class="alert alert-info">Pilih toko untuk melihat produk yang perlu dipesan.</div>
-      @elseif($items->isEmpty())
-        <div class="alert alert-success">Semua stok aman.</div>
       @else
-      <form method="POST" action="{{ route('order-stock.restock') }}">
+      <div id="order-stock-status" class="text-muted small mb-2" role="status" aria-live="polite">Stok dan kebutuhan PO diperbarui otomatis setiap 30 detik.</div>
+      <div id="order-stock-empty" class="alert alert-success" @if($items->isNotEmpty()) hidden @endif>Semua stok aman.</div>
+      <form method="POST" action="{{ route('order-stock.restock') }}" id="order-stock-form"
+            data-store-id="{{ $selected }}"
+            data-stock-url="{{ route('order-stock.index', ['store' => $selected]) }}">
         @csrf
         <input type="hidden" name="idempotency_key" id="order-stock-idempotency-key" value="">
         <input type="hidden" name="store_id" value="{{ $selected }}">
-        <div class="card">
+        <div class="card" id="order-stock-card" @if($items->isEmpty()) hidden @endif>
           <div class="card-body">
             <div class="d-flex justify-content-between align-items-center mb-2">
               <span class="fw-bold">Produk di bawah stok minimum</span>
@@ -76,25 +82,9 @@
                     <th>Total Harga</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody id="order-stock-body">
                   @foreach($items as $item)
-                    <tr class="order-row" data-price="{{ $item->purchase_price ?? 0 }}">
-                      <td><input type="checkbox" name="items[]" value="{{ $item->id }}" class="row-check"></td>
-                      <td>{{ $item->product_code }}</td>
-                      <td>{{ $item->product_name }}</td>
-                      <td>{{ $item->stock_system }}</td>
-                      <td>{{ $item->min_stock ?? '-' }}</td>
-                      <td>{{ $item->max_stock ?? '-' }}</td>
-                      <td>{{ number_format($item->purchase_price ?? 0, 0, ',', '.') }}</td>
-                      <td class="po-cell">
-                        <input type="number"
-                               name="po_qty[{{ $item->id }}]"
-                               class="form-control form-control-sm po-input"
-                               min="0"
-                               value="{{ $item->po_qty ?? 0 }}">
-                      </td>
-                      <td class="row-total fw-semibold">0</td>
-                    </tr>
+                    @include('pages.admin.order-stock.row', ['item' => $item])
                   @endforeach
                 </tbody>
               </table>
@@ -103,11 +93,14 @@
               <div class="fw-bold">Total Harga: <span id="grand-total">0</span></div>
             </div>
             <div class="text-end mt-3">
-              <button type="submit" class="btn btn-primary" id="order-stock-submit">Checklist &amp; Restock ke Max</button>
+              <button type="submit" class="btn btn-primary" id="order-stock-submit" @disabled($items->isEmpty())>Checklist &amp; Restock ke Max</button>
             </div>
           </div>
         </div>
       </form>
+      <template id="order-stock-row-template">
+        @include('pages.admin.order-stock.row', ['item' => null])
+      </template>
       @endif
     </div>
   </div>
@@ -116,52 +109,121 @@
 
 @section('scripts')
 <script>
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.getElementById('order-stock-form');
+  const body = document.getElementById('order-stock-body');
+  const template = document.getElementById('order-stock-row-template');
+  if (!form || !body || !template) return;
+
   const checkAll = document.getElementById('check-all');
-  if (checkAll) {
-    checkAll.addEventListener('change', (e) => {
-      document.querySelectorAll('.row-check').forEach(cb => cb.checked = e.target.checked);
-    });
-  }
+  const status = document.getElementById('order-stock-status');
+  const empty = document.getElementById('order-stock-empty');
+  const card = document.getElementById('order-stock-card');
+  const submit = document.getElementById('order-stock-submit');
+  const key = document.getElementById('order-stock-idempotency-key');
+  let refreshing = false;
+  let submitting = false;
+  const rows = () => Array.from(body.querySelectorAll('.order-row'));
+  const formatRupiah = value => Number(value || 0).toLocaleString('id-ID', {minimumFractionDigits: 0});
 
-  function formatRupiah(num) {
-    const n = Number(num || 0);
-    return n.toLocaleString('id-ID', { minimumFractionDigits: 0 });
-  }
-
-  function recalcTotals() {
+  const recalcTotals = () => {
     let grand = 0;
-    document.querySelectorAll('.order-row').forEach(row => {
-      const price = Number(row.getAttribute('data-price') || 0);
-      const input = row.querySelector('input[name^="po_qty"]');
-      const qty = Number(input?.value || 0);
-      const total = price * qty;
+    const currentRows = rows();
+    currentRows.forEach(row => {
+      const total = Number(row.dataset.price || 0) * Number(row.querySelector('.po-input').value || 0);
+      row.querySelector('.row-total').textContent = formatRupiah(total);
       grand += total;
-      const cell = row.querySelector('.row-total');
-      if (cell) cell.textContent = formatRupiah(total);
     });
-    const grandEl = document.getElementById('grand-total');
-    if (grandEl) grandEl.textContent = formatRupiah(grand);
-  }
+    document.getElementById('grand-total').textContent = formatRupiah(grand);
+    const selected = currentRows.filter(row => row.querySelector('.row-check').checked).length;
+    checkAll.checked = currentRows.length > 0 && selected === currentRows.length;
+    checkAll.indeterminate = selected > 0 && selected < currentRows.length;
+  };
 
-  // initial calc
-  recalcTotals();
-  document.querySelectorAll('input[name^="po_qty"]').forEach(inp => {
-    inp.addEventListener('input', recalcTotals);
-    inp.addEventListener('change', recalcTotals);
+  checkAll.addEventListener('change', event => {
+    rows().forEach(row => { row.querySelector('.row-check').checked = event.target.checked; });
+    recalcTotals();
   });
+  body.addEventListener('input', recalcTotals);
+  body.addEventListener('change', recalcTotals);
 
-  const orderStockForm = document.querySelector('form[action="{{ route('order-stock.restock') }}"]');
-  const orderStockKey = document.getElementById('order-stock-idempotency-key');
-  const orderStockSubmit = document.getElementById('order-stock-submit');
-  if (orderStockForm && orderStockKey && orderStockSubmit) {
-    orderStockKey.value = window.crypto?.randomUUID
-      ? window.crypto.randomUUID()
-      : ('order-stock-' + Date.now() + '-' + Math.random().toString(36).slice(2));
-
-    orderStockForm.addEventListener('submit', () => {
-      orderStockSubmit.disabled = true;
-      orderStockSubmit.textContent = 'Memproses...';
+  const renderItems = items => {
+    const existing = new Map(rows().map(row => [row.dataset.id, row]));
+    items.forEach(item => {
+      const id = String(item.id);
+      let row = existing.get(id);
+      const isNew = !row;
+      if (isNew) row = template.content.firstElementChild.cloneNode(true);
+      const poInput = row.querySelector('.po-input');
+      // Only automatic quantities follow the new suggestion; keep manual edits.
+      const manuallyEdited = !isNew && (row.dataset.manualPo === '1' || poInput.value !== row.dataset.suggestedPo);
+      row.dataset.manualPo = manuallyEdited ? '1' : '0';
+      row.dataset.id = id;
+      row.dataset.price = String(item.purchase_price ?? 0);
+      row.dataset.suggestedPo = String(item.po_qty ?? 0);
+      row.querySelector('.row-check').value = id;
+      poInput.name = `po_qty[${id}]`;
+      if (!manuallyEdited) poInput.value = row.dataset.suggestedPo;
+      const fields = {
+        code: item.product_code, name: item.product_name, stock: item.stock_system,
+        min: item.min_stock ?? '-', max: item.max_stock ?? '-', price: formatRupiah(item.purchase_price),
+      };
+      Object.entries(fields).forEach(([field, value]) => {
+        row.querySelector(`[data-field="${field}"]`).textContent = String(value ?? '');
+      });
+      if (isNew) body.appendChild(row);
+      existing.delete(id);
     });
-  }
+    // Replenished products no longer need an order, even if previously checked.
+    existing.forEach(row => row.remove());
+    empty.hidden = items.length > 0;
+    card.hidden = items.length === 0;
+    submit.disabled = submitting || items.length === 0;
+    recalcTotals();
+  };
+
+  const refreshStock = async () => {
+    if (refreshing || submitting || document.hidden) return;
+    refreshing = true;
+    try {
+      const response = await fetch(form.dataset.stockUrl, {
+        credentials: 'same-origin', cache: 'no-store', headers: {'Accept': 'application/json'},
+      });
+      if (!response.ok || response.redirected) throw new Error('Order stock request failed');
+      const payload = await response.json();
+      if (String(payload.store_id) !== form.dataset.storeId || !Array.isArray(payload.items)) {
+        throw new Error('Invalid order stock response');
+      }
+      if (submitting) return;
+      renderItems(payload.items);
+      status.textContent = 'Stok dan kebutuhan PO terbaru sudah dimuat. Diperbarui otomatis setiap 30 detik.';
+    } catch (error) {
+      status.textContent = 'Pembaruan stok gagal. Data terakhir dan edit PO tetap tersedia; akan dicoba kembali otomatis.';
+    } finally {
+      refreshing = false;
+    }
+  };
+
+  key.value = window.crypto?.randomUUID
+    ? window.crypto.randomUUID()
+    : ('order-stock-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+  form.addEventListener('submit', () => {
+    submitting = true;
+    submit.disabled = true;
+    submit.textContent = 'Memproses...';
+  });
+  recalcTotals();
+  refreshStock();
+  window.setInterval(refreshStock, 30000);
+  window.addEventListener('focus', refreshStock);
+  document.addEventListener('visibilitychange', refreshStock);
+  window.addEventListener('pageshow', event => {
+    if (!event.persisted) return;
+    submitting = false;
+    submit.disabled = rows().length === 0;
+    submit.textContent = 'Checklist & Restock ke Max';
+    refreshStock();
+  });
+});
 </script>
 @endsection
