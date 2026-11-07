@@ -115,4 +115,49 @@ class OrderStockRefreshTest extends TestCase
         $request->setUserResolver(fn () => $user);
         $this->assertEquals(1, $this->items($request)[0]['stock_system']);
     }
+
+    private function seedSearchProducts(): void
+    {
+        DB::table('tb_products')->insert([
+            ['id' => 2, 'product_code' => '08993058300807', 'product_name' => 'Komik Jeruk Nipis', 'is_active' => 1, 'purchase_price' => 1700],
+            ['id' => 3, 'product_code' => '08993058300821', 'product_name' => 'Komik Stok Aman', 'is_active' => 1, 'purchase_price' => 1700],
+        ]);
+        DB::table('tb_product_store_thresholds')->insert([
+            ['product_id' => 2, 'store_id' => 1, 'min_stock' => 5, 'max_stock' => 35],
+            ['product_id' => 3, 'store_id' => 1, 'min_stock' => 5, 'max_stock' => 35],
+        ]);
+        DB::table('tb_incoming_goods')->insert(['product_id' => 3, 'purchase_id' => 1, 'stock' => 30, 'is_pending_stock' => 0]);
+    }
+
+    public function test_search_filters_by_name_and_barcode_without_including_safe_stock(): void
+    {
+        $this->seedSearchProducts();
+        foreach ([' jeruk ', '08993058300807', 'komik', '089930583008'] as $search) {
+            $items = $this->items($this->request(['store' => 1, 'q' => $search]));
+            $this->assertSame([2], array_column($items, 'id'));
+        }
+        $view = app(OrderStockController::class)->index($this->request(['store' => 1, 'q' => ' jeruk ']))->getData();
+        $this->assertSame('jeruk', $view['search']);
+        $this->assertSame([2], $view['items']->pluck('id')->all());
+    }
+
+    public function test_search_with_no_match_is_empty_and_clearing_search_restores_order_items(): void
+    {
+        $this->seedSearchProducts();
+        $this->assertSame([], $this->items($this->request(['store' => 1, 'q' => 'missing'])));
+        $this->assertSame([1, 2], array_column($this->items($this->request(['store' => 1, 'q' => '  '])), 'id'));
+    }
+
+    public function test_export_uses_the_same_search_filter(): void
+    {
+        $this->seedSearchProducts();
+        \Maatwebsite\Excel\Facades\Excel::fake();
+        app(OrderStockController::class)->export($this->request(['store' => 1, 'q' => 'jeruk']));
+        \Maatwebsite\Excel\Facades\Excel::assertDownloaded('order-stock-store-1.xlsx', function ($export) {
+            $this->assertSame([
+                ['Kode' => '08993058300807', 'Produk' => 'Komik Jeruk Nipis', 'PO' => 35],
+            ], $export->collection()->all());
+            return true;
+        });
+    }
 }

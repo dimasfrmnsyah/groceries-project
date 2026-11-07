@@ -46,6 +46,14 @@
                 <input type="text" class="form-control" value="{{ $currentStore ?? '-' }}" disabled>
               </div>
             @endif
+            <div class="col-md-6">
+              <label for="order-stock-search" class="form-label">Cari Produk</label>
+              <div class="input-group">
+                <input type="search" id="order-stock-search" name="q" class="form-control"
+                       value="{{ $search ?? '' }}" placeholder="Nama produk / scan barcode">
+                <button type="submit" class="btn btn-primary">Cari</button>
+              </div>
+            </div>
           </form>
         </div>
       </div>
@@ -54,10 +62,12 @@
         <div class="alert alert-info">Pilih toko untuk melihat produk yang perlu dipesan.</div>
       @else
       <div id="order-stock-status" class="text-muted small mb-2" role="status" aria-live="polite">Stok dan kebutuhan PO diperbarui otomatis setiap 30 detik.</div>
-      <div id="order-stock-empty" class="alert alert-success" @if($items->isNotEmpty()) hidden @endif>Semua stok aman.</div>
+      <div id="order-stock-empty" class="alert alert-info" @if($items->isNotEmpty()) hidden @endif>
+        {{ ($search ?? '') !== '' ? 'Tidak ada produk yang perlu dipesan sesuai pencarian.' : 'Semua stok aman.' }}
+      </div>
       <form method="POST" action="{{ route('order-stock.restock') }}" id="order-stock-form"
             data-store-id="{{ $selected }}"
-            data-stock-url="{{ route('order-stock.index', ['store' => $selected]) }}">
+            data-stock-url="{{ route('order-stock.index', ['store' => $selected, 'q' => $search ?? '']) }}">
         @csrf
         <input type="hidden" name="idempotency_key" id="order-stock-idempotency-key" value="">
         <input type="hidden" name="store_id" value="{{ $selected }}">
@@ -65,7 +75,7 @@
           <div class="card-body">
             <div class="d-flex justify-content-between align-items-center mb-2">
               <span class="fw-bold">Produk di bawah stok minimum</span>
-              <a href="{{ route('order-stock.export', ['store' => $selected]) }}" class="btn btn-sm btn-outline-success">Export Excel</a>
+              <a href="{{ route('order-stock.export', ['store' => $selected, 'q' => $search ?? '']) }}" class="btn btn-sm btn-outline-success">Export Excel</a>
             </div>
             <div class="table-responsive">
               <table class="table table-striped order-stock-table">

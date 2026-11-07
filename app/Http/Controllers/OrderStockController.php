@@ -58,6 +58,7 @@ class OrderStockController extends Controller
         $isSuperadmin = strtolower((string) ($user?->roles)) === 'superadmin';
         $storeId      = store_access_resolve_id($request, $user, ['store']);
         $canSelectStore = store_access_can_select($user);
+        $search = trim((string) $request->query('q', ''));
 
         $stores = $canSelectStore
             ? store_access_list($user)
@@ -70,6 +71,7 @@ class OrderStockController extends Controller
                 'items'        => collect(),
                 'isSuperadmin' => $canSelectStore,
                 'currentStore' => null,
+                'search'       => $search,
             ]);
         }
 
@@ -77,7 +79,7 @@ class OrderStockController extends Controller
             return redirect()->back()->with('warning', 'Pilih toko terlebih dahulu.');
         }
 
-        $items = $this->lowStockQuery($storeId)->get()->map(function ($row) {
+        $items = $this->lowStockQuery($storeId, $search)->get()->map(function ($row) {
             $row->po_qty = $this->defaultPoQuantity($row->stock_system, $row->max_stock);
             return $row;
         });
@@ -97,6 +99,7 @@ class OrderStockController extends Controller
             'items'        => $items,
             'isSuperadmin' => $canSelectStore,
             'currentStore' => $currentStore,
+            'search'       => $search,
         ]);
     }
 
@@ -244,7 +247,8 @@ class OrderStockController extends Controller
         $storeId      = store_access_resolve_id($request, $user, ['store']);
         if (!$storeId) return back()->with('error', 'Pilih toko terlebih dahulu.');
 
-        $items = $this->lowStockQuery($storeId)->get()->map(function ($row) {
+        $search = trim((string) $request->query('q', ''));
+        $items = $this->lowStockQuery($storeId, $search)->get()->map(function ($row) {
             $row->po_qty = $this->defaultPoQuantity($row->stock_system, $row->max_stock);
             return $row;
         });
@@ -352,7 +356,7 @@ class OrderStockController extends Controller
         ];
     }
 
-    private function lowStockQuery(int $storeId)
+    private function lowStockQuery(int $storeId, string $search = '')
     {
         $incomingSub = DB::table('tb_incoming_goods as ig')
             ->leftJoin('tb_purchases as pur', 'pur.id', '=', 'ig.purchase_id')
@@ -432,6 +436,12 @@ class OrderStockController extends Controller
         ->whereNotNull('st.min_stock')
         ->whereRaw('COALESCE(st.min_stock,0) > 0')
         ->whereRaw('(COALESCE(incoming.total_in, 0) - COALESCE(outgoing.total_out, 0)) <= COALESCE(st.min_stock, 0)')
+        ->when($search !== '', function ($query) use ($search) {
+            $query->where(function ($match) use ($search) {
+                $match->where('p.product_code', 'like', '%'.$search.'%')
+                    ->orWhere('p.product_name', 'like', '%'.$search.'%');
+            });
+        })
         ->orderBy('p.product_name');
     }
 
