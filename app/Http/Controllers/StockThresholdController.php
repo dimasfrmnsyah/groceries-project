@@ -158,16 +158,6 @@ class StockThresholdController extends Controller
             ->orderBy('p.product_name')
             ->get();
 
-        if ($request->expectsJson()) {
-            return response()->json([
-                'store_id' => $storeId,
-                'rows' => $rows->map(fn ($row) => [
-                    'id' => (int) $row->id,
-                    'stock_system' => (int) $row->stock_system,
-                ])->values(),
-            ])->header('Cache-Control', 'no-store, private');
-        }
-
         return view('pages.admin.threshold.index', [
             'stores' => $stores,
             'storeId'=> $storeId,
