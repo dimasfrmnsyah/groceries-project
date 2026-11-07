@@ -83,14 +83,6 @@ class OrderStockController extends Controller
             $row->po_qty = $this->defaultPoQuantity($row->stock_system, $row->max_stock);
             return $row;
         });
-
-        if ($request->expectsJson()) {
-            return response()->json([
-                'store_id' => $storeId,
-                'items' => $items,
-            ])->header('Cache-Control', 'no-store, private');
-        }
-
         $currentStore = DB::table('tb_stores')->where('id', $storeId)->value('store_name');
 
         return view('pages.admin.order-stock.index', [
